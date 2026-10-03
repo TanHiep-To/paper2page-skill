@@ -41,6 +41,8 @@ Live examples built with this skill:
 
 - Title, authors, affiliations, equal-contribution and corresponding-author marks, abstract
   (verbatim), keywords and BibTeX, read from the PDF.
+- Results tables re-typed as HTML when every number verifies against the PDF, with row groups kept
+  and the best and second-best values marked from the numbers.
 - Every figure and table cropped from the PDF at 300 dpi, with its printed caption.
 - Sections for Method, Quantitative Results and Qualitative Results, with a one-sentence tagline.
 - A page that follows the template exactly: same fonts, colours, spacing and classes.
@@ -171,7 +173,7 @@ Later changes use the same command; the existing repository is updated, never fo
 |---|---|
 | `--paper <pdf>` | The paper. Required. |
 | `--template <dir>` | Template folder. Default: `template` in `config.yaml`, else the bundled `template/`. |
-| `--name X` | Repository name = page path. Letters, digits, hyphens. Default: `name` in the yaml, else the short name before the colon in the title. |
+| `--name X` | Repository name = page path. Letters, digits, hyphens. Default: `name` in the yaml, else the short name before the colon in the title, else the paper's folder name (`papers/<Name>/`). |
 | `--owner Y` | GitHub account. Default: `owner` in `config.yaml`, else the account `gh` is logged in as. |
 | `--link kind=url` | A link button. Repeatable. `kind=soon` gives a disabled "coming soon" button, `kind=none` hides it. Kinds: `code`, `model`, `dataset`, `arxiv`, `video`. |
 | `--host-pdf` | Compress the PDF and publish it. Without it the button reads "Paper (coming soon)". |
