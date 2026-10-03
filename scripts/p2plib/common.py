@@ -54,10 +54,18 @@ def validate_name(name: str) -> str:
     return name
 
 
-def derive_name(title: str) -> str:
-    """Short method/dataset name: the part of the title before ':' when it is short, else the first word."""
+def derive_name(title: str, pdf: Path | None = None) -> str:
+    """Short method/dataset name: the title's part before ':' when short, else the paper's folder name
+    (papers/<Name>/paper.pdf), else the first word of the title."""
     head = title.split(":", 1)[0].strip() if ":" in title else ""
-    candidate = head if head and len(head.split()) <= 3 else (title.split() or ["paper"])[0]
+    folder = pdf.resolve().parent.name if pdf else ""
+    generic = RESERVED_NAMES | {"papers", "paper", "pdf", "downloads", "desktop", "documents"}
+    if head and len(head.split()) <= 3:
+        candidate = head
+    elif NAME_RE.match(folder) and folder.lower() not in generic:
+        candidate = folder
+    else:
+        candidate = (title.split() or ["paper"])[0]
     return re.sub(r"[^A-Za-z0-9-]+", "-", candidate).strip("-") or "paper"
 
 

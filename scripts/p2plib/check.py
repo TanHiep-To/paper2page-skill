@@ -239,6 +239,8 @@ def check_typography(review: dict) -> Check:
             where = f'{view}: {it["kind"]} "{it["text"]}"'
             if it["lines"] > 1 and it["lastWords"] == 1 and it["lastRatio"] >= 0.5:
                 long_words += 1  # one long unbreakable word (a URL) filling most of the line is not a widow
+            elif it["lines"] > 1 and it["lastWords"] == 1 and it["kind"] in ("title", "caption"):
+                c.warn(f"{where}: last line is a single word (wording comes from the paper, so it is kept)")
             elif it["lines"] > 1 and it["lastWords"] == 1:
                 c.fail(f"{where}: last line is a single word")
             elif it["lines"] > 1 and it["lastRatio"] < 0.2:
@@ -374,7 +376,7 @@ def check_tables(content: dict, extracted: dict, pdf: PdfText) -> Check:
         if {len(r["cells"]) for r in t["rows"]} != {len(t["columns"])}:
             c.fail(f"{tag}: rows do not all have {len(t['columns'])} cells")
         grid = [r for r in src["grid"] if any(x.strip() for x in r)]
-        want = (len(t["rows"]) + 1, len(t["columns"]))
+        want = (len(t["rows"]) + 1, len(t["columns"]) + (1 if any(r.get("group") for r in t["rows"]) else 0))
         if grid and (len(grid), len(grid[0])) != want and not any(col["group"] for col in t["columns"]):
             c.warn(f"{tag}: the PDF grid was read as {len(grid)} x {len(grid[0])} (with header), "
                    f"the page has {want[0]} x {want[1]}; compare manually")

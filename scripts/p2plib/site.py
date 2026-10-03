@@ -324,8 +324,11 @@ def _html_table(soup: BeautifulSoup, t: dict) -> Tag:
     table.append(tbody)
     cols = t["columns"]
     groups = [c.get("group", "") for c in cols]
+    row_groups = any(r.get("group") for r in t["rows"])
     if any(groups):
         top = soup.new_tag("tr")
+        if row_groups:
+            top.append(soup.new_tag("th"))
         i = 0
         while i < len(cols):
             j = i
@@ -337,6 +340,10 @@ def _html_table(soup: BeautifulSoup, t: dict) -> Tag:
             i = j
         thead.append(top)
     head = soup.new_tag("tr")
+    if row_groups:
+        th = soup.new_tag("th", attrs={"scope": "col"})
+        th.string = t.get("row_group_label", "")
+        head.append(th)
     for c in cols:
         th = soup.new_tag("th", attrs={"scope": "col"})
         th.string = typo.bind_numbers(c["label"])
@@ -344,6 +351,13 @@ def _html_table(soup: BeautifulSoup, t: dict) -> Tag:
     thead.append(head)
     for i, row in enumerate(t["rows"]):
         tr = soup.new_tag("tr")
+        if row_groups and (i == 0 or t["rows"][i - 1].get("group") != row.get("group")):
+            span = 1
+            while i + span < len(t["rows"]) and t["rows"][i + span].get("group") == row.get("group"):
+                span += 1
+            th = soup.new_tag("th", attrs={"scope": "rowgroup", "rowspan": str(span)})
+            th.string = row.get("group", "")
+            tr.append(th)
         for c, cell in enumerate(row["cells"]):
             td = soup.new_tag("th", attrs={"scope": "row"}) if cols[c].get("role") == "label" else soup.new_tag("td")
             mark = marks.get((i, c))

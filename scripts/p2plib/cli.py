@@ -68,7 +68,7 @@ def _open(args, link_flags: dict | None = None, host_pdf: bool = False) -> tuple
     if not args.paper.is_file():
         raise P2PError(f"PDF not found: {args.paper}")
     settings = paper_settings(args.paper, link_flags or {}, host_pdf)
-    name = validate_name(args.name or settings["name"] or derive_name(extract.read_header(args.paper)["title"]))
+    name = validate_name(args.name or settings["name"] or derive_name(extract.read_header(args.paper)["title"], args.paper))
     return settings, name, Build(Path("build") / name)
 
 

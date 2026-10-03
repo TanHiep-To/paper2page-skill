@@ -34,7 +34,11 @@ def _header_blocks(page: pymupdf.Page) -> list[list[dict]]:
     for b in page.get_text("dict")["blocks"]:
         if b["type"] != 0:
             continue
-        spans = [s for ln in b["lines"] for s in ln["spans"]]
+        spans = []
+        for ln in b["lines"]:
+            spans += ln["spans"]
+            if ln["spans"]:  # a line break is a word break
+                spans.append({"text": " ", "size": ln["spans"][-1]["size"], "flags": 0, "font": ""})
         text = "".join(s["text"] for s in spans).strip()
         if re.match(r"^abstract\b", text, re.I):
             break
@@ -139,8 +143,8 @@ def _header(page: pymupdf.Page) -> dict:
         first = next((s for s in spans if s["text"].strip()), spans[0])
         if _is_marker(first, body) and re.search(r"\d", first["text"]):
             affiliations += _parse_affiliations(spans)
-        elif not authors and not affiliations:
-            authors = _parse_authors(spans)
+        elif not affiliations:
+            authors += _parse_authors(spans)
     _apply_symbols(authors, _symbol_legend(pdf_text.clean(page.get_text("text"))))
     return {"title": title, "authors": authors, "affiliations": affiliations}
 
@@ -326,7 +330,7 @@ def run(pdf_path: Path, build: Build, overrides: dict) -> dict:
         item["caption"] = pdf_text.dehyphenate(item["caption"], pdf.full)
     data = {"pdf_sha1": sha, "pdf_name": pdf_path.name, "engine": ENGINE, "crop_overrides": overrides,
             "n_pages": len(pdf.pages), **header, "abstract": pdf_text.extract_abstract(pdf) or "",
-            "keywords": _keywords(pdf), "figures": figs, "tables": tabs, "pages": pdf.pages}
+            "keywords": [pdf_text.dehyphenate(k, pdf.full) for k in _keywords(pdf)], "figures": figs, "tables": tabs, "pages": pdf.pages}
     build.extracted_json.write_text(json.dumps(data, ensure_ascii=False, indent=2))
     _contact_sheet(build, figs + tabs)
     warns = [i["id"] for i in figs + tabs if i["status"].startswith("WARN")]
