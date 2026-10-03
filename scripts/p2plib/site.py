@@ -130,8 +130,9 @@ def _block(title: str, inner: str) -> str:
 
 
 class _Figures:
-    def __init__(self, content: dict, extracted_figures: list[dict]) -> None:
-        self.files = {f["id"]: f for f in extracted_figures}
+    def __init__(self, content: dict, extracted: dict) -> None:
+        self.files = {f["id"]: f for f in extracted["figures"]}
+        self.tables = {t["id"]: t for t in extracted["tables"]}
         self.notes = {f["id"]: f for f in content["figures"]}
         self.used: list[str] = []
 
@@ -141,9 +142,24 @@ class _Figures:
         if fig_id not in self.files:
             raise P2PError(f'content.json refers to figure "{fig_id}", which was not extracted '
                            f'(available: {", ".join(self.files)}).')
+        if not self.files[fig_id].get("file"):
+            raise P2PError(f'Figure "{fig_id}" has no crop yet. Set one with `p2p.py recrop --fig '
+                           f'{self.files[fig_id]["number"]} ...` or use another figure.')
         note = self.notes.get(fig_id, {})
         self.used.append(fig_id)
         return render.render_figure(self.files[fig_id], note.get("caption", ""), note.get("alt", ""))
+
+
+    def table(self, t: dict) -> str:
+        """HTML table when the grid was verified against the text layer, otherwise the cropped image."""
+        if t.get("display") == "html" and t.get("columns"):
+            return render.render_table(t)
+        src = self.tables.get(t["id"])
+        if not src or not src.get("file"):
+            raise P2PError(f'Table "{t["id"]}" has no image crop. Set one with `p2p.py recrop --table ...`, '
+                           "or remove the table from content.json.")
+        self.used.append(t["id"])
+        return render.render_table_image(src, t.get("caption") or src["caption"])
 
 
 def _sections(content: dict, figs: _Figures) -> str:
@@ -152,7 +168,7 @@ def _sections(content: dict, figs: _Figures) -> str:
     inner = _text(method["paragraphs"]) + figs.html(method["figure"])
     if inner:
         out += _block("Method", inner)
-    inner = "".join(render.render_table(t) + _text([t["interpretation"]]) for t in content["tables"])
+    inner = "".join(figs.table(t) + _text([t["interpretation"]]) for t in content["tables"])
     if inner:
         out += _block("Quantitative Results", inner)
     inner = "".join(_text([q["description"]]) + figs.html(q["figure"]) for q in content["qualitative"])
@@ -195,10 +211,10 @@ def _body(soup: BeautifulSoup, content: dict, figs: _Figures) -> None:
     soup.select_one("#BibTeX pre code").string = content["bibtex"]
 
 
-def build_html(template_html: str, content: dict, extracted_figures: list[dict], links: dict[str, str],
+def build_html(template_html: str, content: dict, extracted: dict, links: dict[str, str],
                host_pdf: bool, home_url: str, page_url: str) -> tuple[str, list[str]]:
     soup = BeautifulSoup(template_html, "html.parser")
-    figs = _Figures(content, extracted_figures)
+    figs = _Figures(content, extracted)
     _body(soup, content, figs)
     overview = figs.files.get(content["overview_figure"])
     og_image = f"{page_url}static/images/{overview['file']}" if overview and page_url else \
@@ -237,15 +253,15 @@ def run(build: Build, pdf: Path, template_dir: Path, settings: dict, home_url: s
     if is_todo(content["title"]) or is_todo(content["authors"]):
         raise P2PError(f"Title or authors could not be read from the PDF. Fill them in {build.content_json} first.")
     template_html = (template_dir / "index.html").read_text()
-    html, used = build_html(template_html, content, extracted["figures"], settings["links"], settings["host_pdf"],
+    html, used = build_html(template_html, content, extracted, settings["links"], settings["host_pdf"],
                             home_url, page_url)
 
     template.reset_dir(build.site)
     template.copy_template(template_dir, build.site)
     images = build.site / "static" / "images"
     images.mkdir(parents=True, exist_ok=True)
-    for fig in extracted["figures"]:
-        if fig["id"] in used:
+    for fig in extracted["figures"] + extracted["tables"]:
+        if fig["id"] in used and fig.get("file"):
             shutil.copyfile(build.extracted / fig["file"], images / fig["file"])
     info = {"host_pdf": settings["host_pdf"], "figures_used": used}
     if settings["host_pdf"]:
@@ -257,5 +273,5 @@ def run(build: Build, pdf: Path, template_dir: Path, settings: dict, home_url: s
     (build.site / "index.html").write_text(html)
     template.patch_assets(build.site, html)
     removed = template.prune_assets(build.site, html)
-    print(f"  render: {len(used)} figure(s) on the page, {len(removed)} unused template file(s) removed")
+    print(f"  render: {len(used)} image(s) on the page, {len(removed)} unused template file(s) removed")
     return info

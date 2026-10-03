@@ -2,8 +2,8 @@
 """paper2page: build a project page for one paper from an HTML template and publish it to GitHub."""
 import sys
 
-from p2p.cli import main
-from p2p.common import P2PError
+from p2plib.cli import main
+from p2plib.common import P2PError
 
 if __name__ == "__main__":
     try:

@@ -129,7 +129,38 @@ def paper_settings(pdf: Path, link_flags: dict[str, str], host_pdf_flag: bool) -
         "authors": {str(k): str(v) for k, v in (raw.get("authors") or {}).items() if v},
         "metric_directions": directions,
         "host_pdf": bool(host_pdf_flag or raw.get("host_pdf", False)),
+        "crop_overrides": _crop_overrides(raw.get("crop_overrides"), path),
     }
+
+
+def _crop_overrides(raw, path: Path) -> dict:
+    out = {}
+    for key, value in (raw or {}).items():
+        ok = isinstance(value, dict) and isinstance(value.get("page"), int) and isinstance(value.get("bbox"), list) \
+            and len(value["bbox"]) == 4 and re.fullmatch(r"(fig\d+|table[A-Z]?\d+)", str(key))
+        if not ok:
+            raise P2PError(f'{path}: crop_overrides.{key} must look like  fig3: {{page: 5, bbox: [x0, y0, x1, y1]}}')
+        out[str(key)] = {"page": value["page"], "bbox": [float(v) for v in value["bbox"]]}
+    return out
+
+
+def save_crop_override(pdf: Path, key: str, page: int | None, bbox: list[float] | None) -> Path:
+    """Add, replace or (with page=None) remove one entry of crop_overrides in the yaml, keeping its comments."""
+    path = paper_yaml_path(pdf)
+    if not path.is_file():
+        raise P2PError(f"{path} does not exist yet. Run a build first.")
+    current = _crop_overrides(read_yaml(path).get("crop_overrides"), path)
+    if page is None:
+        current.pop(key, None)
+    else:
+        current[key] = {"page": page, "bbox": [round(float(v), 1) for v in bbox]}
+    text = re.sub(r"(?ms)^# Manual crops.*?(?=^crop_overrides:)", "", path.read_text())
+    text = re.sub(r"(?ms)^crop_overrides:.*?(?=^\S|\Z)", "", text).rstrip() + "\n"
+    if current:
+        text += "\n# Manual crops in PDF points (origin top-left), set with `p2p.py recrop`. Reruns keep them.\ncrop_overrides:\n"
+        text += "".join(f"  {k}: {{page: {v['page']}, bbox: {v['bbox']}}}\n" for k, v in sorted(current.items()))
+    path.write_text(text)
+    return path
 
 
 def write_paper_yaml(pdf: Path, name: str, authors: list[dict], metrics: list[tuple[int, str]]) -> Path | None:

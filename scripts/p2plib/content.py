@@ -58,6 +58,8 @@ def _table(t: dict, directions: dict[str, str]) -> dict | None:
     metrics_in = "rows" if row_dirs and not col_dirs else "columns" if col_dirs else TODO
     return {
         "id": t["id"], "number": t["number"], "caption": t["caption"],
+        # "html" only when every number of the grid was verified against the PDF text layer
+        "display": "html" if t.get("html_verified") else "image",
         "metrics_in": metrics_in, "directions": row_dirs if metrics_in == "rows" else col_dirs,
         "columns": [{"label": h, "group": "", "role": role} for h, role in zip(header, roles)],
         "rows": [{"group": "", "cells": r} for r in body],
@@ -110,7 +112,7 @@ def build_fresh(extracted: dict, name: str, settings: dict) -> dict:
         "meta_description": _meta_description(extracted.get("abstract", ""), extracted.get("title", "")),
         "tagline": TODO,
         "abstract_paragraphs": _paragraphs(extracted.get("abstract", "")) or [TODO],
-        "overview_figure": figures[0]["id"] if figures else "",
+        "overview_figure": next((f["id"] for f in extracted["figures"] if f.get("file")), ""),
         "method": {"figure": TODO, "paragraphs": [TODO]},
         "tables": tables,
         "qualitative": [{"figure": TODO, "description": TODO}],
@@ -129,6 +131,8 @@ def refresh(content: dict, name: str, settings: dict) -> dict:
             printed = a.get("pdf_name", a["name"])
             a["pdf_name"], a["name"] = printed, settings["authors"].get(printed, printed)
     for t in content["tables"]:
+        if not t.get("columns"):
+            continue  # shown as an image only
         labels = [c["label"] for c in t["columns"] if c["role"] == "value"] + [r["cells"][0] for r in t["rows"]]
         for label in labels:
             if d := direction_for(label, settings["metric_directions"]):
@@ -159,6 +163,9 @@ def run(build: Build, name: str, settings: dict, reset: bool = False) -> dict:
     existing = load(build) if build.content_json.is_file() else None
     if existing and not reset and existing.get("_source", {}).get("pdf_sha1") == extracted["pdf_sha1"]:
         content = refresh(existing, name, settings)
+        verified = {t["id"]: t.get("html_verified") for t in extracted["tables"]}
+        for t in content["tables"]:
+            t.setdefault("display", "html" if verified.get(t["id"]) and t.get("columns") else "image")
         print("  content: kept existing content.json (settings refreshed)")
     else:
         if existing:

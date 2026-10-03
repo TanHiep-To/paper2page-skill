@@ -4,8 +4,10 @@ A skill for Claude Code and Codex that turns a paper PDF into a project page bui
 template (tested with [Nerfies](https://github.com/nerfies/nerfies.github.io)) and, if asked,
 publishes it to its own GitHub repository.
 
-Extraction and rendering are deterministic Python; no paid API is called. The agent's job is to read
-the paper, fill the few fields that need judgement, and review the result.
+One command runs the whole flow: extract figures and tables, review the crops, fill the content,
+render, check, report, and optionally publish. Extraction and rendering are deterministic Python
+(PyMuPDF, no ML, no paid API). The agent reads the paper, fills the few fields that need judgement,
+and reviews the crops and screenshots.
 
 ## Install
 
@@ -29,8 +31,8 @@ Optional defaults go in `config.yaml` in the skill folder (created from `config.
    ```
    /build-page --paper path/to/paper.pdf --template path/to/template
    ```
-   The agent builds the page, fills the TODO fields from the paper, and shows the screenshots and
-   the report.
+   The agent extracts figures and tables, fixes bad crops, fills the TODO fields from the paper,
+   and shows the screenshots and the report.
 2. Edit the yaml that the first build created beside the PDF (`paper.yaml` for `paper.pdf`, else
    `<pdf name>.yaml`): links, venue, year, author display names, metric directions, `host_pdf`.
    Run the same command again to apply it.
@@ -51,6 +53,7 @@ In Codex, invoke the skill as `$build-page` with the same arguments (or pick it 
 | `--owner Y` | GitHub account. Default: `owner` in `config.yaml`, else `gh api user --jq .login`. |
 | `--link kind=url` | Link button; `kind=soon` gives a disabled "coming soon" button. Repeatable. |
 | `--host-pdf` | Compress the PDF and publish it. Without it the button reads "Paper (coming soon)". |
+| `--from step` | Start at `extract`, `content`, `render` or `check`, reusing earlier outputs. |
 | `--publish` | Create or update the GitHub repository and push. |
 | `--pages` | With `--publish`: enable GitHub Pages (main, root) and wait for it. |
 | `--private` | With `--publish`: create a private repository. Pages on a free account needs a public one. |
@@ -66,7 +69,7 @@ Everything goes to `./build/<name>/` in the folder where the command runs:
 
 ```
 build/<name>/
-  extracted/       fig1.png ..., extracted.json, contact_sheet.png
+  extracted/       fig1.png ..., table1.png ..., extracted.json, contact_sheet.png
   content.json     page content; TODO fields are filled by the agent
   report.md        PASS / WARN / FAIL per check, extraction log, manual checklist
   screenshots/     desktop.png (1280 px), mobile.png (390 px)
@@ -82,14 +85,46 @@ Steps, each reading the previous step's output:
 | render | `content.json`, the template, the yaml | `site/` |
 | check | `site/`, `content.json`, `extracted.json` | `report.md`, `screenshots/` |
 
+## Extraction
+
+- Captions "Figure N" / "Fig. N" / "Table N" anchor the detection. Figures are taken above the
+  caption and tables below it, each falling back to the other side; single-column and full-width
+  layouts; sub-figures (a)(b)(c) stay together. Rendered at 300 dpi, white margins trimmed, PNG for
+  diagrams and JPEG for photographic content, each under 500 KB.
+- If a figure is one embedded photo with more pixels than the 300 dpi render, the original image is
+  used (`pdfimages` from poppler when installed; PyMuPDF otherwise and for images with a
+  transparency mask).
+- Captions are the exact text of the PDF text layer.
+- Every table gets an image. It also gets an HTML version only if every number in its grid is found
+  in the PDF text layer; only then may `content.json` use `"display": "html"`, which adds bold for
+  the best and underline for the second-best value, computed from the numbers.
+- `extracted/contact_sheet.png` shows every crop for review.
+
+Fixing a crop (saved under `crop_overrides` in the paper's yaml, so reruns keep it):
+
+```bash
+$P2P grid   --paper paper.pdf --page 8                              # page with a coordinate grid
+$P2P recrop --paper paper.pdf --fig 1 --page 8 --bbox 140,46,480,270   # PDF points, origin top-left
+$P2P recrop --paper paper.pdf --table 3 --page 22 --bbox 170,105,450,196
+$P2P recrop --paper paper.pdf --fig 1 --reset
+```
+
+### Optional: MinerU engine
+
+`--engine mineru` is reserved for papers where caption-anchored detection is not enough (scanned
+PDFs, figures without captions). It is off by default, not installed by `install.sh`, and not
+implemented in this repository: MinerU downloads layout models of several GB and wants a GPU or a
+lot of RAM. To try it, install it yourself in a separate environment (`pip install mineru`), run it
+on the PDF, and set crops from its output with `recrop`. The default engine stays the supported path.
+
 Filled from the PDF without an agent: title, authors, affiliations, corresponding-author mark,
-abstract (verbatim), keywords, all figures with captions, numeric tables, BibTeX. Left as `TODO`:
+abstract (verbatim), keywords, all figures and tables with captions, BibTeX. Left as `TODO`:
 tagline, method summary and figure, table interpretation and orientation, qualitative figures.
 
 ## Using the tool directly
 
 ```bash
-P2P="$HOME/.claude/skills/build-page/.venv/bin/python $HOME/.claude/skills/build-page/scripts/paper2page.py"
+P2P="$HOME/.claude/skills/build-page/.venv/bin/python $HOME/.claude/skills/build-page/scripts/p2p.py"
 $P2P build --paper paper.pdf --template ./template          # extract -> content -> render -> check
 $P2P build --paper paper.pdf --template ./template --from render   # after editing content.json
 $P2P publish build/<name> [--owner Y] [--private] [--pages] [--yes]
@@ -103,7 +138,7 @@ is through `gh` only.
 
 ## Checks in report.md
 
-Content complete, template skeleton, no template sample content, title / authors / affiliations,
+Content complete, extraction, template skeleton, no template sample content, title / authors / affiliations,
 abstract match (fuzzy ratio >= 0.95), numbers check (every number on the page is in the PDF), table
 check, figure captions, BibTeX consistency, accessibility and meta tags, links, image and PDF sizes,
 browser review (console errors, overflow at 1280 px and 390 px, contrast).
@@ -112,12 +147,12 @@ browser review (console errors, overflow at 1280 px and 390 px, contrast).
 
 ```
 SKILL.md            the agent workflow
-scripts/paper2page.py
-scripts/p2p/
+scripts/p2p.py      entry point: build, grid, recrop, publish
+scripts/p2plib/
   common.py     settings, names, paths        extract.py   step 1
   pdf_text.py   text, abstract, numbers       content.py   step 2
-  figures.py    figure crops                  site.py      step 3
-  tables.py     table grids                   check.py     step 4
+  figures.py    figure detection and crops    site.py      step 3
+  tables.py     table detection and grids     check.py     step 4
   render.py     figures, tables, buttons      browser.py   Chromium review
   template.py   copy, prune, patch            publish.py   git / gh
 ```

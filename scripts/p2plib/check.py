@@ -27,7 +27,7 @@ OPTIONAL_CLOSE = {"p", "li", "td", "th", "tr", "thead", "tbody", "option", "dt",
 MANUAL = [
     "Author names (and any display-name overrides), affiliation numbers and the * mark against page 1 of the PDF.",
     "Results table: rows, columns, units against the paper, and the metric directions set in the yaml.",
-    "Each figure shows the right graphic for its caption and is cropped cleanly (see extracted/contact_sheet.png).",
+    "Each figure and table image shows the right graphic for its caption, cropped cleanly (extracted/contact_sheet.png).",
     "Tagline and section summaries say only what the paper says.",
     "Venue and year in the BibTeX entry (taken from the yaml).",
     "If host_pdf is true: you have the right to host the PDF publicly.",
@@ -254,6 +254,12 @@ def check_tables(content: dict, extracted: dict, pdf: PdfText) -> Check:
         if not src:
             c.fail(f"{tag}: no such table was found in the PDF")
             continue
+        if t.get("display") != "html" or not t.get("columns"):
+            c.note(f"{tag}: shown as the image cropped from PDF page {src['page']} (no re-typed values to verify)")
+            continue
+        if not src["html_verified"]:
+            c.fail(f"{tag}: shown as HTML, but its numbers were not verified against the PDF text layer; "
+                   'set "display": "image"')
         near = " ".join(pdf.pages[i] for i in (src["page"] - 1, src["page"]) if i < len(pdf.pages))
         cells = " ".join(cell for r in t["rows"] for cell in r["cells"])
         bad = sorted(pdf_text.numbers_in(cells) - pdf_text.numbers_in(near))
@@ -294,7 +300,7 @@ def check_tables(content: dict, extracted: dict, pdf: PdfText) -> Check:
 def check_figures(content: dict, extracted: dict, html: str) -> Check:
     c = Check("Figure mapping and captions")
     source = {f["id"]: f for f in extracted["figures"]}
-    used = [f for f in extracted["figures"] if f'static/images/{f["file"]}' in html]
+    used = [f for f in extracted["figures"] if f.get("file") and f'static/images/{f["file"]}' in html]
     for note in content["figures"]:
         fig = source.get(note["id"])
         if fig and fig in used and fig["caption"]:
@@ -446,15 +452,30 @@ def check_browser(review: dict) -> Check:
 # ---------- report ----------
 
 def _extraction_lines(extracted: dict, content: dict) -> list[str]:
-    lines = [f"- {f['id']} (page {f['page']}): {f.get('method', 'cropped')}; {f['width']}x{f['height']} px, "
-             f"{f['bytes'] // 1024} KB, {f['file'].rsplit('.', 1)[-1].upper()}" for f in extracted["figures"]]
-    shown = {t["id"] for t in content["tables"]}
+    shown = {t["id"]: t.get("display", "image") for t in content["tables"]}
+    lines = []
+    for f in extracted["figures"]:
+        size = f"{f['width']}x{f['height']} px, {f['bytes'] // 1024} KB" if f.get("file") else "no image"
+        lines.append(f"- {f['id']} (page {f['page']}): {f['status']}; {f['method']}; {size}")
     for t in extracted["tables"]:
         grid = [r for r in t["grid"] if any(x.strip() for x in r)]
-        how = f"grid read between the table's rules: {len(grid)} x {len(grid[0])}" if grid else "WARN: grid not detected"
-        lines.append(f"- {t['id']} (page {t['page']}): {how}; "
-                     f"{'shown on the page' if t['id'] in shown else 'not shown (not a numeric results table)'}")
+        html = "numbers verified against the text layer" if t["html_verified"] else "HTML version not verified, image only"
+        use = f"shown as {shown[t['id']]}" if t["id"] in shown else "not shown"
+        lines.append(f"- {t['id']} (page {t['page']}): {t['status']}; {t['method']}; "
+                     f"grid {len(grid)} x {len(grid[0]) if grid else 0}, {html}; {use}")
     return lines
+
+
+def check_extraction(extracted: dict) -> Check:
+    c = Check("Extraction")
+    items = extracted["figures"] + extracted["tables"]
+    for i in items:
+        if i["status"].startswith("WARN"):
+            c.warn(f"{i['id']} (page {i['page']}): {i['status']}")
+    manual = [i["id"] for i in items if "manual" in i["status"]]
+    c.note(f"{len(extracted['figures'])} figure(s), {len(extracted['tables'])} table(s) by caption-anchored detection"
+           + (f"; manual crops: {', '.join(manual)}" if manual else ""))
+    return c
 
 
 def render_report(name: str, checks: list[Check], extracted: dict, content: dict, shots: dict) -> str:
@@ -487,7 +508,7 @@ def run(build: Build, template_dir: Path, info: dict) -> list[Check]:
     print("  check: reviewing the page in headless Chromium ...")
     review = browser.review(build.site, build.screenshots)
     checks = [
-        check_complete(content, build), check_skeleton(template_html, html, template_dir),
+        check_complete(content, build), check_extraction(extracted), check_skeleton(template_html, html, template_dir),
         check_sample_text(template_html, html), check_identity(content, html, pdf), check_abstract(html, pdf),
         check_numbers(content, html, pdf), check_tables(content, extracted, pdf),
         check_figures(content, extracted, html), check_bibtex(content, html), check_page_quality(html),

@@ -36,7 +36,7 @@ EXTRA_CSS = """
 }
 
 .paper-figure figcaption {
-  margin-top: 0.5rem;
+  margin: 0.5rem 0;
   font-size: 0.875rem;
   color: #555;
 }
@@ -106,6 +106,16 @@ def render_figure(fig: dict, caption: str, alt: str) -> str:
             f'<a href="{src}" target="_blank" rel="noopener" title="Open full size">'
             f'<img src="{src}" alt="{escape(alt or caption, quote=True)}" loading="lazy" '
             f'width="{fig["width"]}" height="{fig["height"]}"></a>{cap}</figure>')
+
+
+def render_table_image(tab: dict, caption: str) -> str:
+    """A table shown as the image cropped from the PDF (caption above, like a table)."""
+    src = f"./static/images/{tab['file']}"
+    cap = f"<figcaption><strong>Table {escape(str(tab['number']))}.</strong> {escape(caption)}</figcaption>"
+    return (f'<figure class="paper-figure">{cap}'
+            f'<a href="{src}" target="_blank" rel="noopener" title="Open full size">'
+            f'<img src="{src}" alt="{escape("Table " + str(tab["number"]) + ": " + caption, quote=True)}" '
+            f'loading="lazy" width="{tab["width"]}" height="{tab["height"]}"></a></figure>')
 
 
 # ---------- tables ----------

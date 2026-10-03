@@ -1,7 +1,7 @@
 ---
 name: build-page
-description: Build a project page for a research paper from an HTML template (Nerfies style), review it, and optionally publish it to its own GitHub repository with GitHub Pages.
-argument-hint: "--paper <pdf> [--template <dir>] [--name X] [--owner Y] [--link key=url|soon ...] [--host-pdf] [--publish] [--pages] [--private]"
+description: Build a project page for a research paper from an HTML template (Nerfies style) with one command - extract figures and tables, fill the content, render, check, and optionally publish to its own GitHub repository with GitHub Pages.
+argument-hint: "--paper <pdf> [--template <dir>] [--name X] [--owner Y] [--link key=url|soon ...] [--host-pdf] [--publish] [--pages] [--private] [--from extract|content|render|check]"
 disable-model-invocation: true
 ---
 
@@ -9,62 +9,99 @@ disable-model-invocation: true
 
 Arguments given by the user: `$ARGUMENTS`
 
-Build a project page for one paper, fill in the parts that need reading the paper, review the result,
-and publish it only if asked.
+One command runs the whole flow: extract, review crops, content, render, check, report, and (only if
+asked) publish. Scripts do everything deterministic; you review images and fill what needs reading.
 
-## Paths
+## Paths and settings
 
 - `SKILL` = the folder that contains this file: `${CLAUDE_SKILL_DIR}` in Claude Code. If that variable
   is empty, use `~/.claude/skills/build-page` (Claude Code) or `~/.agents/skills/build-page` (Codex).
+- `P2P` = `"$SKILL/.venv/bin/python" "$SKILL/scripts/p2p.py"`.
 - Paths in the arguments are relative to the user's current folder. Do not `cd` elsewhere.
-- Tool: `"$SKILL/.venv/bin/python" "$SKILL/scripts/paper2page.py"` (called `P2P` below).
 - Outputs go to `./build/<name>/` in the user's current folder:
-  `extracted/` (figure crops, `extracted.json`, `contact_sheet.png`), `content.json`, `report.md`,
-  `screenshots/desktop.png`, `screenshots/mobile.png`, and `site/` (the page to publish).
-- Per-paper settings live in a yaml beside the PDF (`paper.yaml` for `paper.pdf`, otherwise
-  `<pdf name>.yaml`). The first build creates it. Command-line flags override it, and it overrides
-  `$SKILL/config.yaml` (default `owner`, `home_url`, `template`).
+  `extracted/` (figN / tableN images, `extracted.json`, `contact_sheet.png`), `content.json`,
+  `report.md`, `screenshots/desktop.png`, `screenshots/mobile.png`, `site/` (the page to publish).
+- Per-paper settings: a yaml beside the PDF (`paper.yaml` for `paper.pdf`, otherwise
+  `<pdf name>.yaml`), created by the first build. Precedence: command-line flags, then that yaml,
+  then `$SKILL/config.yaml` (default `owner`, `home_url`, `template`).
+- `--from extract|content|render|check` starts the build at that step, using earlier outputs.
 
-## Workflow
+## 1. Parse the arguments and set up
 
-### 1. Parse the arguments
-- `--paper <pdf>` is required and must be an existing file. `--template <dir>` must contain
-  `index.html`; it may be omitted only if `template:` is set in `$SKILL/config.yaml`.
-- If either is missing or invalid, ask the user. Never guess a path or pick a PDF yourself.
-- Build flags to pass through: `--template --paper --name --owner --link --host-pdf`.
-  Publish flags, used only in step 7: `--publish --pages --private` (and `--owner --name`).
+- `--paper <pdf>` is required and must be an existing file. If it is missing or invalid, ask the user.
+  Never guess a path or pick a PDF yourself.
+- `--template <dir>` may be omitted when `template:` is set in `$SKILL/config.yaml`. If it is needed
+  and missing or has no `index.html`, ask the user.
+- Build flags: `--paper --template --name --owner --link --host-pdf --from`.
+  Publish flags, used only in step 8: `--publish --pages --private`.
+- First run only: if `$SKILL/.venv/bin/python` does not exist, run `"$SKILL/install.sh" --venv-only`.
 
-### 2. First run only: set up
-If `$SKILL/.venv/bin/python` does not exist, run `"$SKILL/install.sh" --venv-only` and wait for it.
+## 2. Extract (script)
 
-### 3. Build (deterministic, no paid API)
 ```
 P2P build --paper <pdf> [--template <dir>] [--name X] [--owner Y] [--link k=v ...] [--host-pdf]
 ```
-Exit code 1 with only "Content complete: FAIL" is expected here: it means TODO fields remain.
-Exit code 2 is a usage or environment error: report it to the user and stop.
+This runs all four steps once. The extract step uses PyMuPDF only (no ML, fine on a weak machine):
+- Finds "Figure N" / "Fig. N" / "Table N" captions. Figures are taken above the caption, tables
+  below it, each falling back to the other side. Works for single-column and full-width layouts and
+  keeps sub-figures (a)(b)(c) together. Renders at 300 dpi and trims white margins.
+- If a figure is one embedded photo with more pixels than the render, the original image is kept
+  (`pdfimages`, or PyMuPDF when the image has a transparency mask).
+- Captions are the exact text of the PDF text layer.
+- Every table gets an image. A table also gets an HTML version only if every number in it verifies
+  against the PDF text layer (`html_verified` in `extracted.json`).
+- Writes `extracted.json` and `contact_sheet.png`.
 
-### 4. Fill every TODO in `build/<name>/content.json`
-Read the paper PDF itself (all of it, not just the abstract) and edit `content.json`.
-Keep a note of the PDF page each fact came from; you report it in step 6.
+Exit code 1 with "Content complete: FAIL" is expected on the first run (TODO fields remain).
+Exit code 2 is a usage or environment error: report it and stop.
+
+## 3. Review the crops (you)
+
+Open `build/<name>/extracted/contact_sheet.png`, then open each crop file you are unsure about.
+A crop is good when it contains the whole figure or table and nothing else: no "Fig. N" / "Table N"
+caption, no body text, nothing cut off. Panel labels and "(a) ... (b) ..." sub-captions printed
+inside a multi-panel figure belong to the figure.
+
+Fix a bad crop with the script commands only. Do not write ad-hoc cropping code and do not edit
+image files.
+
+```
+P2P grid   --paper <pdf> --page P                               # page image with a coordinate grid
+P2P recrop --paper <pdf> --fig N   --page P --bbox x0,y0,x1,y1  # PDF points, origin top-left
+P2P recrop --paper <pdf> --table N --page P --bbox x0,y0,x1,y1
+P2P recrop --paper <pdf> --fig N --reset                        # back to automatic detection
+```
+`grid` writes `extracted/grid_pP.png`: lines every 10 pt, labels every 50 pt, current crops outlined
+in red with their bbox. Read the bbox off the grid, run `recrop`, then open the new crop and check it.
+`recrop` saves the box in the yaml under `crop_overrides`, so every later run keeps it.
+Repeat until every crop you will use is clean. Keep a list of the fixes for the report.
+A figure or table whose status in `extracted.json` starts with `WARN` has no usable crop yet: recrop
+it or do not use it.
+
+## 4. Content (script, then you)
+
+The script has already written `build/<name>/content.json` with title, authors, affiliations,
+abstract, figures, captions, tables and BibTeX. Read the paper PDF itself (all of it, not just the
+abstract) and fill every field that says `TODO`. Note the PDF page of each fact; you report it in
+step 7.
 
 Rules:
 - Facts only from the paper. Never invent numbers, links, venues, dates or claims. Every number you
-  write must be printed in the paper, in the same form (same decimals, same thousands separators).
-- Neutral academic tone. No marketing words ("novel", "state-of-the-art", "powerful") unless quoted
-  from the paper. Paragraphs of at most 3 sentences.
-- Plain text only: no HTML, Markdown or LaTeX.
+  write must be printed in the paper in the same form (same decimals, same separators).
+- Neutral academic tone. No marketing words unless quoted from the paper. Paragraphs of at most
+  3 sentences. Plain text only: no HTML, Markdown or LaTeX.
 
 Fields:
 - `tagline`: exactly one sentence saying what the work is, containing its key number.
-- `overview_figure`: id of the figure that gives the best overview (default: `fig1`). Change it if
-  another figure is the architecture or teaser figure.
+- `overview_figure`: id of the figure that gives the best overview (default: the first figure).
 - `method.figure`: id of the main method or system figure; `""` if there is none or it is already
-  the overview figure. `method.paragraphs`: 1-3 short paragraphs on how the method works; `[]` to
-  omit the section.
-- `tables`: numeric results tables detected in the PDF. Compare every cell with the PDF and fix
-  extraction errors. Keep only the main results table(s) and delete the others. If the main table
-  is missing, copy its grid from `extracted/extracted.json` (`tables[].grid`) using the same shape.
+  the overview figure. `method.paragraphs`: 1-3 short paragraphs on how the method works; `[]`
+  omits the section.
+- `tables`: the numeric results tables found in the PDF. Keep only the main results table(s) and
+  delete the others. For each one kept:
+  - `display`: `"html"` (re-typed table with computed highlighting; allowed only when the table's
+    `html_verified` is true in `extracted.json`) or `"image"` (the crop from the PDF). When
+    `"html"`, compare every cell with the PDF and fix any difference.
   - `metrics_in`: `"columns"` if each value column is a metric and rows are methods; `"rows"` if
     each row is a metric and the value columns are methods.
   - `directions`: metric label -> `"higher"` or `"lower"`. Set one only when the paper makes the
@@ -73,42 +110,54 @@ Fields:
     underline are computed from the numbers.
   - `interpretation`: 2-3 sentences on what the table shows, using only numbers from the table,
     including any caveat the paper itself states.
+  - To show a table that is not in the list, add
+    `{"id": "table2", "number": "2", "caption": "...", "display": "image", "interpretation": "..."}`
+    with the id and caption from `extracted.json`.
 - `qualitative`: 1-3 entries `{figure, description}` for figures that show results or the system
-  in use; 1-2 sentences each. Do not reuse the overview or method figure. `[]` to omit the section.
+  in use; 1-2 sentences each. Do not reuse the overview or method figure. `[]` omits the section.
 - `figures[].caption`: the printed caption. You may shorten it, never change its meaning.
   `figures[].alt`: a short literal description of what the image shows.
-- Do not edit: `title`, `authors`, `affiliations`, `abstract_paragraphs` (verbatim from the PDF),
-  `bibtex`, `venue`, `year`, `name`, `_source`. If the title or an author is wrong, tell the user;
-  display names, venue and year are changed in the yaml, not here.
+- Do not edit `title`, `authors`, `affiliations`, `abstract_paragraphs` (verbatim from the PDF),
+  `bibtex`, `venue`, `year`, `name`, `_source`. If the title or an author is wrong, tell the user.
+  Display names, venue and year are changed in the yaml, not here.
 
-### 5. Re-render and review
+## 5. Render (script)
+
 ```
-P2P build --paper <pdf> [same flags] --from render
+P2P build --paper <pdf> [same flags] --from content
 ```
-Then look at these images yourself:
-- `build/<name>/extracted/contact_sheet.png`: every crop must contain the whole figure and nothing
-  else (no "Fig. N" caption, no body text, nothing cut off). Panel labels and "(a) ... (b) ..."
-  sub-captions printed inside a multi-panel figure belong to the figure and are fine.
-- `build/<name>/screenshots/desktop.png` and `mobile.png`: layout matches the template, figures are
-  readable, the table fits (it may scroll sideways on mobile), nothing overlaps or overflows.
+Use `--from content` after recrops or yaml changes, `--from render` when only `content.json`
+changed. The page is built from the template and `content.json` into `build/<name>/site/`.
+Never edit `site/index.html` by hand: it is regenerated on every render.
 
-If a figure on the page has a bad crop, use a different figure, or drop it and say so; do not publish
-a bad crop. Fix content problems in `content.json` and re-render until `report.md` has no FAIL.
-Do not edit `site/index.html` by hand: it is regenerated on every render.
+## 6. Check (script, then you)
 
-### 6. Report
+The same command runs every quality check and takes the screenshots. Then look at
+`screenshots/desktop.png` and `screenshots/mobile.png` yourself: layout matches the template,
+figures are readable, the table fits (it may scroll sideways on mobile), nothing overlaps or
+overflows. Read `report.md`.
+
+Fix problems at their source and run step 5 again: content problems in `content.json`, bad images
+with `recrop`, settings in the yaml. Repeat until `report.md` has no FAIL and the screenshots are
+clean.
+
+## 7. Report
+
 Show the user:
 - the commands you ran;
-- the extraction method per figure and table and any WARN (section "Extraction" in `report.md`);
+- extraction method and status per figure and table (section "Extraction" in `report.md`), with
+  every WARN;
+- the crop fixes you made (figure or table, page, bbox, why);
 - each TODO field you filled, with the PDF page the facts came from;
 - both screenshots;
 - the PASS / WARN / FAIL table from `report.md`;
-- a short list of what they must verify by hand (section "Verify manually" in `report.md`, plus
-  anything you were unsure about).
+- what they must verify by hand (section "Verify manually" in `report.md`, plus anything you were
+  unsure about).
 
 Stop here unless `--publish` was given.
 
-### 7. Publish (only with `--publish`, and only if `report.md` has no FAIL and no TODO remains)
+## 8. Publish (only with `--publish`, and only if `report.md` has no FAIL and no TODO remains)
+
 a. Run `gh auth status`. If `gh` is missing or not logged in, tell the user to run `gh auth login`
    and stop.
 b. Owner = `--owner`, else `owner` in `$SKILL/config.yaml`, else `gh api user --jq .login`.
@@ -124,14 +173,18 @@ c. Run:
 d. If the repository exists, the tool updates it only when it contains the `.paper2page` marker
    (created by this tool). If it stops because the marker is missing, do not work around it:
    report it and ask the user. The tool never force-pushes; do not force-push either.
-e. With `--pages` the tool enables GitHub Pages (main, root) through `gh api` and waits up to about
-   2 minutes. Without it, it prints the manual Settings > Pages instructions.
-   With `--private`, repeat its warning: Pages on a free account needs a public repository, and
-   on paid plans a page served from a private repository is still public. If the user combines
+e. With `--pages` the tool enables GitHub Pages (main, root) through `gh api` and polls the status
+   for up to about 2 minutes. Without it, it prints the manual Settings > Pages instructions.
+   With `--private`, repeat its warning: Pages on a free account needs a public repository, and on
+   paid plans a page served from a private repository is still public. If the user combines
    `--private` and `--pages`, ask them to confirm that the page may be public before running it.
 f. Report the repository URL, the page URL `https://<owner>.github.io/<name>/`, and whether Pages
    is live.
 
-### 8. Credentials
-Never write tokens or keys to any file and never ask the user for one. GitHub access is only through
-the `gh` login that already exists.
+Credentials: never write tokens or keys to any file and never ask the user for one. GitHub access is
+only through the existing `gh` login.
+
+## Optional heavy engine (off by default)
+
+`--engine mineru` is documented in `README.md` but not installed or bundled. Do not install it
+unless the user asks. The default engine needs nothing beyond `requirements.txt`.

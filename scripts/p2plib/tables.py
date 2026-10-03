@@ -1,4 +1,4 @@
-"""Best-effort table extraction: find 'Table N' captions and read the grid between the table's rules."""
+"""Caption-anchored table detection: the table's area (for an image crop) and a best-effort cell grid."""
 from __future__ import annotations
 
 import re
@@ -6,9 +6,10 @@ from collections import Counter
 
 import pymupdf
 
+from .figures import column_range, text_blocks
 from .pdf_text import clean, numbers_in, squash
 
-CAPTION_RE = re.compile(r"^\s*(?:Table|TABLE)\s+(\d+)\s*[:.|]")
+CAPTION_RE = re.compile(r"^\s*(?:Table|TABLE)\s+([A-Z]?\d+)\s*[:.|]")
 CELL_GAP = 7.0   # words closer than this (pt) belong to the same cell
 LINE_TOL = 3.0   # words within this vertical distance are on the same text line
 
@@ -18,14 +19,26 @@ def _rules(page: pymupdf.Page) -> list[pymupdf.Rect]:
     return sorted((r for r in rects if r.height < 2 and r.width > 40), key=lambda r: r.y0)
 
 
-def _table_clip(caption: pymupdf.Rect, rules: list[pymupdf.Rect]) -> pymupdf.Rect | None:
-    """Area between the first and last horizontal rule under the caption (or above it)."""
-    below = [r for r in rules if r.y0 >= caption.y1 - 2]
-    above = [r for r in rules if r.y1 <= caption.y0 + 2]
-    group = below if len(below) >= 2 else above if len(above) >= 2 else []
+def _span(rules: list[pymupdf.Rect]) -> list[pymupdf.Rect]:
+    """The first run of rules that belong to one table (no gap larger than half a page)."""
+    run = rules[:1]
+    for r in rules[1:]:
+        if r.y0 - run[-1].y1 > 420:
+            break
+        run.append(r)
+    return run
+
+
+def _table_rect(caption: pymupdf.Rect, rules: list[pymupdf.Rect], x0: float, x1: float) -> tuple[pymupdf.Rect | None, str]:
+    """Area between the first and last horizontal rule below the caption; falls back to above it."""
+    in_col = [r for r in rules if r.x1 > x0 + 2 and r.x0 < x1 - 2]
+    below = _span([r for r in in_col if r.y0 >= caption.y1 - 2])
+    above = _span([r for r in reversed(in_col) if r.y1 <= caption.y0 + 2])
+    group, side = (below, "below") if len(below) >= 2 else (above, "above") if len(above) >= 2 else ([], "")
     if not group:
-        return None
-    return pymupdf.Rect(min(r.x0 for r in group) - 2, group[0].y0, max(r.x1 for r in group) + 2, group[-1].y1)
+        return None, ""
+    ys = [r.y0 for r in group] + [r.y1 for r in group]
+    return pymupdf.Rect(min(r.x0 for r in group) - 2, min(ys) - 2, max(r.x1 for r in group) + 2, max(ys) + 2), side
 
 
 def _lines(words: list[tuple]) -> list[list[tuple]]:
@@ -51,9 +64,9 @@ def _segments(line: list[tuple]) -> list[list]:
     return segs
 
 
-def _grid(words: list[tuple]) -> list[list[str]]:
-    """Rows of cell strings. Columns come from the lines that have the most common cell count."""
-    rows = [_segments(ln) for ln in _lines(words)]
+def read_grid(page: pymupdf.Page, rect: pymupdf.Rect) -> list[list[str]]:
+    """Rows of cell strings from the text layer. Columns come from the lines with the most common cell count."""
+    rows = [_segments(ln) for ln in _lines(page.get_text("words", clip=rect))]
     if not rows:
         return []
     width = Counter(len(r) for r in rows).most_common(1)[0][0]
@@ -71,9 +84,9 @@ def _grid(words: list[tuple]) -> list[list[str]]:
     return grid
 
 
-def _bold_numbers(page: pymupdf.Page, clip: pymupdf.Rect) -> list[str]:
+def bold_numbers(page: pymupdf.Page, rect: pymupdf.Rect) -> list[str]:
     found: set[str] = set()
-    for b in page.get_text("dict", clip=clip)["blocks"]:
+    for b in page.get_text("dict", clip=rect)["blocks"]:
         for ln in b.get("lines", []):
             for s in ln["spans"]:
                 if s["flags"] & 16 or re.search(r"bold|medi", s["font"], re.I):
@@ -81,21 +94,18 @@ def _bold_numbers(page: pymupdf.Page, clip: pymupdf.Rect) -> list[str]:
     return sorted(found)
 
 
-def extract_tables(doc: pymupdf.Document) -> list[dict]:
-    tables: dict[int, dict] = {}
+def detect_tables(doc: pymupdf.Document) -> list[dict]:
+    """One entry per 'Table N' caption: label, page (1-based), caption, rect (or None), side."""
+    found: dict[str, dict] = {}
     for page in doc:
+        blocks = text_blocks(page)
         rules = None
-        for b in page.get_text("blocks"):
-            m = CAPTION_RE.match(b[4])
-            if not m or int(m.group(1)) in tables:
+        for b in blocks:
+            m = CAPTION_RE.match(b["text"])
+            if not m or m.group(1) in found:
                 continue
             rules = _rules(page) if rules is None else rules
-            clip = _table_clip(pymupdf.Rect(b[:4]), rules)
-            grid = _grid(page.get_text("words", clip=clip)) if clip else []
-            n = int(m.group(1))
-            tables[n] = {
-                "id": f"table{n}", "number": n, "page": page.number + 1,
-                "caption": CAPTION_RE.sub("", squash(b[4])).strip(),
-                "grid": grid, "bold_numbers": _bold_numbers(page, clip) if clip else [],
-            }
-    return [tables[n] for n in sorted(tables)]
+            rect, side = _table_rect(b["rect"], rules, *column_range(b["rect"], blocks))
+            found[m.group(1)] = {"label": m.group(1), "page": page.number + 1,
+                                 "caption": CAPTION_RE.sub("", squash(b["text"])).strip(), "rect": rect, "side": side}
+    return list(found.values())
