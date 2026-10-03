@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from . import check, content, extract, publish, site
-from .common import STEPS, Build, P2PError, detect_owner, derive_name, load_config, paper_settings, \
+from .common import SKILL_DIR, STEPS, Build, P2PError, detect_owner, derive_name, load_config, paper_settings, \
     parse_link_flags, paper_yaml_path, save_crop_override, validate_name, write_paper_yaml
 
 TODO_HINT = "Ask Claude Code to fill the TODO fields in {path} from the paper, then run with --from render"
@@ -56,9 +56,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _template_dir(flag: Path | None, config: dict) -> Path:
-    path = flag or (Path(config["template"]).expanduser() if config["template"] else None)
-    if path is None:
-        raise P2PError("No template given. Pass --template <dir> or set `template:` in the skill's config.yaml.")
+    """--template, else `template:` in config.yaml, else the template bundled with the skill."""
+    path = flag or (Path(config["template"]).expanduser() if config["template"] else SKILL_DIR / "template")
     if not (path / "index.html").is_file():
         raise P2PError(f"Template has no index.html: {path}")
     return path

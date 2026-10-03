@@ -2,4 +2,4 @@
 # Command-line flags and the per-paper yaml override these values.
 
 owner:       # GitHub account that owns the page repositories. Empty: `gh api user --jq .login`.
-template:    # Default template folder (absolute path), so --template can be left out.
+template:    # Template folder (absolute path). Empty: the template/ folder bundled with this skill.

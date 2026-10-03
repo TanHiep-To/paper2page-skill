@@ -40,7 +40,7 @@ place() {  # place <target dir>
   fi
   if [ "$MODE" = "copy" ]; then
     mkdir -p "$target"
-    (cd "$HERE" && tar cf - --exclude .venv --exclude .git --exclude config.yaml --exclude .cache --exclude __pycache__ .) | (cd "$target" && tar xf -)
+    (cd "$HERE" && tar cf - --exclude .venv --exclude .git --exclude config.yaml --exclude .cache --exclude 'papers/*' --exclude build --exclude __pycache__ .) | (cd "$target" && tar xf -)
     echo "Copied to $target"
   else
     ln -s "$HERE" "$target"

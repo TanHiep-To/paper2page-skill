@@ -1,7 +1,10 @@
 .venv/
 config.yaml
+.cache/
 __pycache__/
 *.pyc
 .DS_Store
 build/
-.cache/
+# your papers stay on your machine
+papers/*
+!papers/.gitkeep

@@ -71,8 +71,9 @@ needs judgement:
 
 - `--paper <pdf>` is required and must be an existing file. If it is missing or invalid, ask the user.
   Never guess a path or pick a PDF yourself.
-- `--template <dir>` may be omitted when `template:` is set in `$SKILL/config.yaml`. If it is needed
-  and missing or has no `index.html`, ask the user.
+- `--template <dir>` is optional. Without it the tool uses `template:` from `$SKILL/config.yaml`, and
+  if that is empty, the template bundled with the skill at `$SKILL/template`. If a given template
+  folder has no `index.html`, ask the user.
 - Build flags: `--paper --template --name --owner --link --host-pdf --from`.
   Publish flags, used only in step 8: `--publish --pages --private`.
 - First run only: if `$SKILL/.venv/bin/python` does not exist, run `"$SKILL/install.sh" --venv-only`.
