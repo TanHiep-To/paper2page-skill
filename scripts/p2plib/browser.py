@@ -104,7 +104,7 @@ _STYLE_PROBE = """
     'h1': pick(document.querySelector('h1'), [...text, 'textAlign', 'marginBottom']),
     'section h2 (h2.title.is-3)': pick(document.querySelector('section.section h2.title.is-3'), [...text, 'textAlign', 'marginBottom']),
     'paragraph (section .content p)': pick(document.querySelector('section.section .content p'), [...text, 'textAlign']),
-    'caption (h2.subtitle)': pick(document.querySelector('h2.subtitle'), text),
+    'teaser caption (.teaser h2.subtitle)': pick(document.querySelector('.teaser h2.subtitle'), text),
     'link (footer a)': pick(document.querySelector('footer .content p a[href]'), ['color', 'textDecorationLine']),
     'author line (.publication-authors)': pick(document.querySelector('.publication-authors'), text),
     'link button (.link-block a)': pick(document.querySelector('.link-block a'), ['fontSize', 'color', 'backgroundColor', 'borderRadius', 'height']),
