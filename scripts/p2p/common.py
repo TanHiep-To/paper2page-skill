@@ -1,0 +1,197 @@
+"""Shared pieces: errors, build paths, name rules, and settings (flags > paper.yaml > config.yaml)."""
+from __future__ import annotations
+
+import fnmatch
+import re
+import shutil
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+
+import yaml
+
+SKILL_DIR = Path(__file__).resolve().parents[2]
+STEPS = ["extract", "content", "render", "check"]
+RESERVED_NAMES = {"projects", "publications", "cv", "people", "course", "thesis", "demo", "blog"}
+NAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$")
+LINK_ORDER = ["code", "model", "dataset", "arxiv", "video"]
+TODO = "TODO"
+
+
+class P2PError(Exception):
+    """A user-facing error: printed without a traceback."""
+
+
+@dataclass(frozen=True)
+class Build:
+    """All generated files of one paper: <cwd>/build/<name>/."""
+    dir: Path
+
+    @property
+    def extracted(self) -> Path: return self.dir / "extracted"
+    @property
+    def extracted_json(self) -> Path: return self.extracted / "extracted.json"
+    @property
+    def contact_sheet(self) -> Path: return self.extracted / "contact_sheet.png"
+    @property
+    def content_json(self) -> Path: return self.dir / "content.json"
+    @property
+    def site(self) -> Path: return self.dir / "site"
+    @property
+    def report(self) -> Path: return self.dir / "report.md"
+    @property
+    def report_json(self) -> Path: return self.dir / "report.json"
+    @property
+    def screenshots(self) -> Path: return self.dir / "screenshots"
+
+
+def validate_name(name: str) -> str:
+    if not NAME_RE.match(name):
+        raise P2PError(f'Invalid project name "{name}". Use letters, digits and hyphens only.')
+    if name.lower() in RESERVED_NAMES:
+        raise P2PError(f'Project name "{name}" collides with a page on the main site. '
+                       f'Reserved names: {", ".join(sorted(RESERVED_NAMES))}. Choose another with --name.')
+    return name
+
+
+def derive_name(title: str) -> str:
+    """Short method/dataset name: the part of the title before ':' when it is short, else the first word."""
+    head = title.split(":", 1)[0].strip() if ":" in title else ""
+    candidate = head if head and len(head.split()) <= 3 else (title.split() or ["paper"])[0]
+    return re.sub(r"[^A-Za-z0-9-]+", "-", candidate).strip("-") or "paper"
+
+
+def is_todo(value) -> bool:
+    return isinstance(value, str) and TODO in value
+
+
+# ---------- yaml ----------
+
+def read_yaml(path: Path) -> dict:
+    if not path.is_file():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text()) or {}
+    except yaml.YAMLError as e:
+        raise P2PError(f"{path} is not valid YAML: {e}") from e
+    if not isinstance(data, dict):
+        raise P2PError(f"{path} must contain a mapping of settings.")
+    return data
+
+
+def paper_yaml_path(pdf: Path) -> Path:
+    """paper.yaml beside paper.pdf; <stem>.yaml beside any other PDF name."""
+    return pdf.with_name("paper.yaml" if pdf.stem == "paper" else f"{pdf.stem}.yaml")
+
+
+def parse_link_flags(items: list[str]) -> dict[str, str]:
+    links = {}
+    for item in items:
+        kind, sep, url = item.partition("=")
+        if not sep or not kind.strip():
+            raise P2PError(f'Invalid --link "{item}". Expected KIND=URL or KIND=soon.')
+        links[kind.strip().lower()] = url.strip()
+    return links
+
+
+def _clean_links(raw: dict, source: str) -> dict[str, str]:
+    links = {}
+    for kind, url in (raw or {}).items():
+        url = str(url or "").strip()
+        if not url:
+            continue
+        if url.lower() != "soon" and not re.match(r"^https?://", url):
+            raise P2PError(f'{source}: link "{kind}" must be a URL, "soon", or empty (got "{url}").')
+        links[str(kind).lower()] = "soon" if url.lower() == "soon" else url
+    return dict(sorted(links.items(), key=lambda kv: LINK_ORDER.index(kv[0]) if kv[0] in LINK_ORDER else 99))
+
+
+def load_config() -> dict:
+    """Optional <skill>/config.yaml: owner, home_url, template."""
+    data = read_yaml(SKILL_DIR / "config.yaml")
+    return {k: str(data.get(k) or "").strip() for k in ("owner", "home_url", "template")}
+
+
+def paper_settings(pdf: Path, link_flags: dict[str, str], host_pdf_flag: bool) -> dict:
+    """paper.yaml values with command-line overrides applied."""
+    path = paper_yaml_path(pdf)
+    raw = read_yaml(path)
+    directions = {}
+    for label, value in (raw.get("metric_directions") or {}).items():
+        value = str(value).strip().lower()
+        if value not in ("higher", "lower"):
+            raise P2PError(f'{path}: metric_directions["{label}"] must be "higher" or "lower".')
+        directions[str(label)] = value
+    links = _clean_links({**(raw.get("links") or {}), **link_flags}, str(path))
+    return {
+        "name": str(raw.get("name") or "").strip(), "links": links,
+        "venue": str(raw.get("venue") or "").strip(), "year": str(raw.get("year") or "").strip(),
+        "authors": {str(k): str(v) for k, v in (raw.get("authors") or {}).items() if v},
+        "metric_directions": directions,
+        "host_pdf": bool(host_pdf_flag or raw.get("host_pdf", False)),
+    }
+
+
+def write_paper_yaml(pdf: Path, name: str, authors: list[dict], metrics: list[tuple[int, str]]) -> Path | None:
+    """First run: create the yaml beside the PDF, pre-filled with what was detected. Never overwrites."""
+    path = paper_yaml_path(pdf)
+    if path.exists():
+        return None
+    q = lambda s: '"' + s.replace('"', '\\"') + '"'  # noqa: E731
+    author_lines = "\n".join(f"  {q(a['name'])}: {q(a['name'])}" for a in authors)
+    metric_lines = "\n".join(f"  # {q(label)}: higher    # Table {n}" for n, label in metrics)
+    path.write_text(f"""\
+# Settings for the project page of {pdf.name}. Generated on the first run with what was detected
+# in the PDF; edit and rebuild. Command-line flags override these values.
+
+name: {name}    # repo name = page path (letters, digits, hyphens)
+
+links:          # a URL, "soon" (disabled "coming soon" button), or empty (no button)
+  code:
+  model:
+  dataset:
+  arxiv:
+  video:
+
+venue:          # e.g. "AI & Society"; empty if not published yet
+year:
+
+host_pdf: false # true = compress the PDF and publish it; false = "Paper (coming soon)"
+
+# Display names. Left: as printed in the PDF (do not change). Right: as shown on the page,
+# e.g. with diacritics.
+authors:
+{author_lines or "  # (authors were not detected)"}
+
+# Which way is better, per metric label (wildcards such as "P@*" are allowed). Needed for
+# bold / underline in the results table. Uncomment the lines that are metrics and set them to
+# higher or lower. Labels detected in the numeric tables:
+metric_directions:
+{metric_lines or "  # (no numeric results table detected)"}
+""")
+    return path
+
+
+def direction_for(label: str, directions: dict[str, str]) -> str | None:
+    """'higher' | 'lower' for a metric label: arrows in the label first, then exact or wildcard match."""
+    if "↑" in label:
+        return "higher"
+    if "↓" in label:
+        return "lower"
+    clean = re.sub(r"[↑↓]", "", label).strip().lower()
+    for pattern, value in directions.items():
+        p = pattern.strip().lower()
+        if clean == p or fnmatch.fnmatchcase(clean, p):
+            return value
+    return None
+
+
+def detect_owner(*candidates: str) -> str:
+    for c in candidates:
+        if c:
+            return c
+    if shutil.which("gh"):
+        r = subprocess.run(["gh", "api", "user", "--jq", ".login"], capture_output=True, text=True)
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    return ""
