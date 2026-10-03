@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+import requests
 from bs4 import BeautifulSoup
 
 
@@ -75,6 +76,40 @@ def prune_assets(out: Path, html: str) -> list[str]:
         if ".git" not in d.relative_to(out).parts and not any(d.iterdir()):
             d.rmdir()
     return removed
+
+
+FA_CDN = "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/{version}/webfonts/{name}"
+
+
+def add_missing_webfonts(out: Path, cache: Path) -> list[str]:
+    """Supply Font Awesome font files that the template's CSS references but the template does not ship.
+
+    The CSS stays byte-identical; only the missing .woff2 files are added (downloaded once, then cached).
+    Without network access nothing is added and the 404s stay (reported as inherited from the template).
+    """
+    added = []
+    for css in (out / "static" / "css").glob("*.css"):
+        text = css.read_text(errors="ignore")
+        version = re.search(r"Font Awesome Free (\d+\.\d+\.\d+)", text)
+        if not version:
+            continue
+        for rel in sorted(set(re.findall(r"url\(([^)#?]*webfonts/fa-[\w-]+\.woff2)\)", text))):
+            target = (css.parent / rel).resolve()
+            if target.exists() or not target.is_relative_to(out.resolve()):
+                continue
+            cached = cache / "fontawesome" / version.group(1) / target.name
+            if not cached.is_file():
+                try:
+                    r = requests.get(FA_CDN.format(version=version.group(1), name=target.name), timeout=20)
+                    r.raise_for_status()
+                except requests.RequestException:
+                    continue
+                cached.parent.mkdir(parents=True, exist_ok=True)
+                cached.write_bytes(r.content)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(cached, target)
+            added.append(f"{target.relative_to(out.resolve())} (Font Awesome Free {version.group(1)}, SIL OFL 1.1)")
+    return added
 
 
 def patch_assets(out: Path, html: str) -> list[str]:

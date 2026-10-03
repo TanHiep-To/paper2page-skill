@@ -23,7 +23,7 @@ You also need a template folder (an `index.html` plus `static/`), for example a 
 repository. Publishing needs the [GitHub CLI](https://cli.github.com), logged in with `gh auth login`.
 
 Optional defaults go in `config.yaml` in the skill folder (created from `config.example.yaml`):
-`owner`, `home_url` for the navbar home icon, and `template`, which makes `--template` optional.
+`owner` and `template`, which makes `--template` optional.
 
 ## The 3-step routine for a new paper
 
@@ -51,7 +51,7 @@ In Codex, invoke the skill as `$build-page` with the same arguments (or pick it 
 | `--template <dir>` | Template folder. Optional if `template` is set in `config.yaml`. |
 | `--name X` | Repo name = page path. Default: `name` in the yaml, else the short name in the title. |
 | `--owner Y` | GitHub account. Default: `owner` in `config.yaml`, else `gh api user --jq .login`. |
-| `--link kind=url` | Link button; `kind=soon` gives a disabled "coming soon" button. Repeatable. |
+| `--link kind=url` | Link button; `kind=soon` gives a disabled "coming soon" button. Repeatable. The Code button is always shown ("Code (coming soon)" without a URL); `code=none` hides it. |
 | `--host-pdf` | Compress the PDF and publish it. Without it the button reads "Paper (coming soon)". |
 | `--from step` | Start at `extract`, `content`, `render` or `check`, reusing earlier outputs. |
 | `--publish` | Create or update the GitHub repository and push. |
@@ -149,7 +149,10 @@ The template is the design system. The renderer builds a block library from the 
   `is-fullwidth`, `is-hoverable`);
 - no inline style, `<style>` tag, CSS rule or new class is ever added, and the template's CSS files
   are copied byte for byte. The one template file the tool changes is `static/js/index.js`, where two
-  calls that preload frames of the removed interpolation widget are commented out.
+  calls that preload frames of the removed interpolation widget are commented out. Font Awesome font
+  files that the template's CSS points to but the template does not ship are added unchanged (fetched
+  once from cdnjs for the version named in the CSS), which removes the template's 404 requests;
+- the navbar home icon points to the page itself.
 
 The check "Template fidelity" fails, and blocks publishing, on any added style, changed CSS file,
 unknown class, or computed style (fonts, colours, section backgrounds and padding) that differs

@@ -218,6 +218,8 @@ def check_fidelity(template_html: str, html: str, template_dir: Path, site: Path
         c.warn("computed styles could not be compared (browser not available)")
     c.note(f"no inline style or <style> added; {len(css_files)} CSS file(s) byte-identical to the template; "
            f"all classes exist in the template; {compared} computed style values equal to the template's original page")
+    for added in info.get("added", []):
+        c.note(f"font file the template's CSS refers to but does not ship, added unchanged: {added}")
     for patched in info.get("patched", []):
         c.note(f"template file changed by the tool (JavaScript, no visual effect): {patched}")
     return c

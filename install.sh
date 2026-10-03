@@ -40,7 +40,7 @@ place() {  # place <target dir>
   fi
   if [ "$MODE" = "copy" ]; then
     mkdir -p "$target"
-    (cd "$HERE" && tar cf - --exclude .venv --exclude .git --exclude config.yaml --exclude __pycache__ .) | (cd "$target" && tar xf -)
+    (cd "$HERE" && tar cf - --exclude .venv --exclude .git --exclude config.yaml --exclude .cache --exclude __pycache__ .) | (cd "$target" && tar xf -)
     echo "Copied to $target"
   else
     ln -s "$HERE" "$target"
@@ -73,6 +73,6 @@ elif ! gh auth status >/dev/null 2>&1; then
 else
   echo "gh: logged in as $(gh api user --jq .login)"
 fi
-echo "Done. Optional defaults (owner, home_url, template): $CLAUDE_TARGET/config.yaml"
+echo "Done. Optional defaults (owner, template): $CLAUDE_TARGET/config.yaml"
 echo "Claude Code:  /build-page --paper paper.pdf --template ./template"
 echo "Codex:        \$build-page --paper paper.pdf --template ./template"

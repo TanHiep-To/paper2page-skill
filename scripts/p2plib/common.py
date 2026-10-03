@@ -96,9 +96,12 @@ def parse_link_flags(items: list[str]) -> dict[str, str]:
 
 def _clean_links(raw: dict, source: str) -> dict[str, str]:
     links = {}
-    for kind, url in (raw or {}).items():
+    raw = {"code": "", **(raw or {})}
+    for kind, url in raw.items():
         url = str(url or "").strip()
-        if not url:
+        if str(kind).lower() == "code" and not url:
+            url = "soon"  # the Code button is always shown; "none" hides it
+        if not url or url.lower() == "none":
             continue
         if url.lower() != "soon" and not re.match(r"^https?://", url):
             raise P2PError(f'{source}: link "{kind}" must be a URL, "soon", or empty (got "{url}").')
@@ -107,9 +110,9 @@ def _clean_links(raw: dict, source: str) -> dict[str, str]:
 
 
 def load_config() -> dict:
-    """Optional <skill>/config.yaml: owner, home_url, template."""
+    """Optional <skill>/config.yaml: owner, template."""
     data = read_yaml(SKILL_DIR / "config.yaml")
-    return {k: str(data.get(k) or "").strip() for k in ("owner", "home_url", "template")}
+    return {k: str(data.get(k) or "").strip() for k in ("owner", "template")}
 
 
 def paper_settings(pdf: Path, link_flags: dict[str, str], host_pdf_flag: bool) -> dict:
@@ -178,7 +181,7 @@ def write_paper_yaml(pdf: Path, name: str, authors: list[dict], metrics: list[tu
 name: {name}    # repo name = page path (letters, digits, hyphens)
 
 links:          # a URL, "soon" (disabled "coming soon" button), or empty (no button)
-  code:
+  code:         # empty = "Code (coming soon)"; write none to hide the button
   model:
   dataset:
   arxiv:

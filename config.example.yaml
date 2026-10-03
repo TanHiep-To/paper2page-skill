@@ -2,5 +2,4 @@
 # Command-line flags and the per-paper yaml override these values.
 
 owner:       # GitHub account that owns the page repositories. Empty: `gh api user --jq .login`.
-home_url:    # Where the navbar home icon points. Empty: https://<owner>.github.io/
 template:    # Default template folder (absolute path), so --template can be left out.

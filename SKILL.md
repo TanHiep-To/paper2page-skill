@@ -23,7 +23,7 @@ asked) publish. Scripts do everything deterministic; you review images and fill 
   `report.md`, `screenshots/desktop.png`, `screenshots/mobile.png`, `site/` (the page to publish).
 - Per-paper settings: a yaml beside the PDF (`paper.yaml` for `paper.pdf`, otherwise
   `<pdf name>.yaml`), created by the first build. Precedence: command-line flags, then that yaml,
-  then `$SKILL/config.yaml` (default `owner`, `home_url`, `template`).
+  then `$SKILL/config.yaml` (default `owner`, `template`).
 - `--from extract|content|render|check` starts the build at that step, using earlier outputs.
 
 ## Template fidelity (applies to every step)
@@ -161,6 +161,8 @@ Fields:
   in use; 1-2 sentences each. Do not reuse the overview or method figure. `[]` omits the section.
 - `figures[].caption`: the printed caption. You may shorten it, never change its meaning.
   `figures[].alt`: a short literal description of what the image shows.
+- Link buttons: Paper and Code are always shown; without a URL they read "(coming soon)". The home
+  icon in the navbar points to the page itself.
 - Links: never add or change a link yourself, even one printed in the paper. If the paper gives a
   code, data or project URL, tell the user so they can put it in the yaml or pass `--link`.
 - Do not edit `title`, `authors`, `affiliations`, `abstract_paragraphs` (verbatim from the PDF),

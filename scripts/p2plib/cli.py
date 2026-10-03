@@ -81,8 +81,8 @@ def cmd_build(args) -> int:
     links = parse_link_flags(args.link)
     settings, name, build = _open(args, links, args.host_pdf)
     owner = detect_owner(args.owner or "", config["owner"])
-    home_url = config["home_url"] or (f"https://{owner.lower()}.github.io/" if owner else "")
     page_url = f"https://{owner.lower()}.github.io/{name}/" if owner else ""
+    home_url = page_url or "./"  # the home icon reloads this page
     start = STEPS.index(args.start)
     for step, needed in (("content", build.extracted_json), ("render", build.content_json), ("check", build.site / "index.html")):
         if start >= STEPS.index(step) and not needed.exists():
