@@ -58,8 +58,7 @@ Live examples built with this skill:
 | GitHub CLI `gh` | 2.x, logged in | Only for publishing. | `gh auth status` |
 | poppler (`pdfimages`) | optional | Extracts original embedded photos. Without it PyMuPDF is used. | `pdfimages -v` |
 
-Disk space: the clone is about 85 MB (the bundled template includes its demo videos), and the
-virtual environment with Chromium for the screenshots adds about 500 MB.
+Disk space: the virtual environment with Chromium for the screenshots takes about 500 MB.
 
 Install the system tools if you do not have them:
 
@@ -235,7 +234,9 @@ underlined. The marks are computed from the numbers, never typed by hand.
 | `owner` | Default GitHub account for page repositories. Empty: the account `gh` is logged in as. |
 | `template` | Absolute path of another template folder. Empty: the bundled `template/`. |
 
-The bundled `template/` is the [Nerfies](https://github.com/nerfies/nerfies.github.io) project page.
+The bundled `template/` is the [Nerfies](https://github.com/nerfies/nerfies.github.io) project page,
+without its demo videos (built pages never use them, so the template's own demo page shows empty
+video boxes).
 To use a different design, point `template` (or `--template`) at a folder that contains an
 `index.html` and its `static/` files. The renderer expects the Nerfies structure: a title block with
 author and affiliation lines and link buttons, a teaser section, an "Abstract" section, and a BibTeX
