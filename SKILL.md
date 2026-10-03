@@ -26,6 +26,47 @@ asked) publish. Scripts do everything deterministic; you review images and fill 
   then `$SKILL/config.yaml` (default `owner`, `home_url`, `template`).
 - `--from extract|content|render|check` starts the build at that step, using earlier outputs.
 
+## Template fidelity (applies to every step)
+
+The template is the design system and is followed 100%. The renderer only clones blocks that exist
+in the template's own `index.html` (navbar, title, author and affiliation lines, link button,
+teaser, the Abstract section as the standard section, heading, paragraph, image, caption, BibTeX,
+footer) and changes their text, `href`, `src` and `alt`. Every content section is a clone of the
+Abstract section, so all sections share one background and spacing. Tables, for which the template
+has no block, use Bulma classes already shipped in the template's CSS.
+
+When you fix a problem you may change only:
+- `content.json` (text, which figure or table goes where, sections left empty to omit them);
+- crops, with `recrop`;
+- the yaml settings.
+
+You must never:
+- add or edit CSS files or rules, `<style>` tags, or `style` attributes;
+- add a class that is not in the template's `index.html` or its CSS files;
+- change fonts, colours, backgrounds, spacing or heading levels;
+- edit `site/index.html`, files under `site/static/`, or anything in the template folder.
+
+If a layout problem cannot be solved by content, crops or settings, do not invent a style: describe
+the problem in the report and ask the user. The check "Template fidelity" in `report.md` fails on any
+added style, changed CSS file, unknown class, or computed style that differs from the template's
+original page, and a FAIL blocks publishing.
+
+## Typography (content-level only)
+
+The renderer already inserts non-breaking spaces so that names, numbers with their units
+("Table 3", "23 images"), and the last words of titles, headings, captions and paragraphs stay
+together, and it breaks the title after its colon when that gives balanced lines. You handle what
+needs judgement:
+- The check "Typography" in `report.md` measures the page at 1280 px and 390 px. A one-word last
+  line or a last line under 20% of the width in text you wrote (tagline, summaries, interpretation,
+  descriptions) is fixed by rewording that text slightly: same facts, same numbers.
+- Tagline: at most 2 lines on desktop. If it is longer or unbalanced, rewrite it shorter with the
+  same facts and the same key number.
+- Title: at most 3 lines on desktop. If it is longer, tell the user; do not change the title.
+- Abstract and captions come from the paper: never change their wording. Only non-breaking spaces
+  (automatic) and where the abstract is split into paragraphs may change.
+- Never fix typography with CSS, `<br>` in `content.json`, or manual `&nbsp;`.
+
 ## 1. Parse the arguments and set up
 
 - `--paper <pdf>` is required and must be an existing file. If it is missing or invalid, ask the user.
@@ -117,6 +158,8 @@ Fields:
   in use; 1-2 sentences each. Do not reuse the overview or method figure. `[]` omits the section.
 - `figures[].caption`: the printed caption. You may shorten it, never change its meaning.
   `figures[].alt`: a short literal description of what the image shows.
+- Links: never add or change a link yourself, even one printed in the paper. If the paper gives a
+  code, data or project URL, tell the user so they can put it in the yaml or pass `--link`.
 - Do not edit `title`, `authors`, `affiliations`, `abstract_paragraphs` (verbatim from the PDF),
   `bibtex`, `venue`, `year`, `name`, `_source`. If the title or an author is wrong, tell the user.
   Display names, venue and year are changed in the yaml, not here.
@@ -135,7 +178,9 @@ Never edit `site/index.html` by hand: it is regenerated on every render.
 The same command runs every quality check and takes the screenshots. Then look at
 `screenshots/desktop.png` and `screenshots/mobile.png` yourself: layout matches the template,
 figures are readable, the table fits (it may scroll sideways on mobile), nothing overlaps or
-overflows. Read `report.md`.
+overflows. Open `screenshots/template_vs_output.png` as well: the template's original page and the
+built page side by side; navbar, title area and footer must look the same apart from the text.
+Read `report.md`, in particular "Template fidelity" and "Typography".
 
 Fix problems at their source and run step 5 again: content problems in `content.json`, bad images
 with `recrop`, settings in the yaml. Repeat until `report.md` has no FAIL and the screenshots are
@@ -149,7 +194,8 @@ Show the user:
   every WARN;
 - the crop fixes you made (figure or table, page, bbox, why);
 - each TODO field you filled, with the PDF page the facts came from;
-- both screenshots;
+- both screenshots and `screenshots/template_vs_output.png`;
+- the "Template fidelity" and "Typography" results;
 - the PASS / WARN / FAIL table from `report.md`;
 - what they must verify by hand (section "Verify manually" in `report.md`, plus anything you were
   unsure about).

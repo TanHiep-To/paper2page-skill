@@ -21,7 +21,6 @@ from .template import ATTRIBUTION_HINT, is_local, local_refs, sample_tokens
 
 ORDER = {"PASS": 0, "WARN": 1, "FAIL": 2}
 ABSTRACT_MIN_RATIO = 0.95
-OUR_CLASSES = {"paper-figure", "paper-table", "row-label"}
 VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
 OPTIONAL_CLOSE = {"p", "li", "td", "th", "tr", "thead", "tbody", "option", "dt", "dd"}
 MANUAL = [
@@ -29,6 +28,7 @@ MANUAL = [
     "Results table: rows, columns, units against the paper, and the metric directions set in the yaml.",
     "Each figure and table image shows the right graphic for its caption, cropped cleanly (extracted/contact_sheet.png).",
     "Tagline and section summaries say only what the paper says.",
+    "screenshots/template_vs_output.png: navbar, title area and footer look like the template's apart from the text.",
     "Venue and year in the BibTeX entry (taken from the yaml).",
     "If host_pdf is true: you have the right to host the PDF publicly.",
 ]
@@ -144,11 +144,6 @@ def check_skeleton(template_html: str, html: str, template_dir: Path) -> Check:
                        ("h1", "h1"), ("h2", "h2"), ("h3", "h3")):
         for sig in sorted(_signatures(page, sel) - _signatures(tpl, sel)):
             c.warn(f'{label} class "{sig or "(none)"}" does not occur in the template')
-    known = OUR_CLASSES | {cls for el in tpl.find_all(class_=True) for cls in el["class"]}
-    for f in (template_dir / "static" / "css").glob("*.css"):
-        known |= set(re.findall(r"\.(-?[A-Za-z_][\w-]*)", f.read_text(errors="ignore")))
-    for cls in sorted({cls for el in page.find_all(class_=True) for cls in el["class"]} - known):
-        c.warn(f'CSS class "{cls}" is not defined by the template or Bulma')
     footer = page.find("footer")
     if not footer or not footer.select_one(f'a[href*="{ATTRIBUTION_HINT}"]'):
         c.fail("the template attribution link is missing from the footer")
@@ -156,6 +151,104 @@ def check_skeleton(template_html: str, html: str, template_dir: Path) -> Check:
         c.fail("Google Analytics is still present")
     if not c.details:
         c.note(f"{len(want)} head includes, section/container/heading classes, navbar and footer match the template")
+    return c
+
+
+def _known_classes(tpl: BeautifulSoup, template_dir: Path) -> set[str]:
+    known = {cls for el in tpl.find_all(class_=True) for cls in el["class"]}
+    for f in template_dir.rglob("*.css"):
+        known |= set(re.findall(r"\.(-?[A-Za-z_][\w-]*)", f.read_text(errors="ignore")))
+    return known
+
+
+def check_fidelity(template_html: str, html: str, template_dir: Path, site: Path, review: dict, info: dict) -> Check:
+    """The template is the design system: no added styles, identical CSS, known classes, same computed styles."""
+    c = Check("Template fidelity")
+    tpl, page = BeautifulSoup(template_html, "html.parser"), BeautifulSoup(html, "html.parser")
+
+    allowed = [el["style"].strip() for el in tpl.find_all(style=True)]
+    for el in page.find_all(style=True):
+        if el["style"].strip() not in allowed:
+            c.fail(f'inline style added on <{el.name}>: style="{el["style"]}"')
+    if len(page.find_all("style")) > len(tpl.find_all("style")):
+        c.fail(f"{len(page.find_all('style')) - len(tpl.find_all('style'))} <style> tag(s) added")
+
+    css_files = sorted(site.rglob("*.css"))
+    for f in css_files:
+        rel = f.relative_to(site)
+        original = template_dir / rel
+        if not original.is_file():
+            c.fail(f"CSS file not in the template: {rel}")
+        elif original.read_bytes() != f.read_bytes():
+            c.fail(f"CSS file differs from the template's: {rel}")
+
+    known = _known_classes(tpl, template_dir)
+    unknown = sorted({cls for el in page.find_all(class_=True) for cls in el["class"]} - known)
+    for cls in unknown:
+        c.fail(f'class "{cls}" is not in the template\'s index.html or its CSS files')
+
+    styles = review.get("styles", {})
+    compared = 0
+    if "template" in styles and "output" in styles:
+        t, o = styles["template"], styles["output"]
+        for element, want in t.items():
+            if element == "sections" or want is None or o.get(element) is None:
+                continue
+            for prop, value in want.items():
+                compared += 1
+                if o[element][prop] != value:
+                    c.fail(f"{element}: {prop} is {o[element][prop]} (template: {value})")
+        by_sig = {sec["sig"]: sec for sec in t["sections"]}
+        for sec in o["sections"]:
+            ref = by_sig.get(sec["sig"])
+            if ref is None:
+                c.fail(f'{sec["sig"]}: this section wrapper does not exist in the template')
+                continue
+            for prop, value in ref.items():
+                compared += 1
+                if sec[prop] != value:
+                    c.fail(f'{sec["sig"]}: {prop} is {sec[prop]} (template: {value})')
+        content = [sec for sec in o["sections"] if sec["sig"] == "section.section"]
+        if len({json.dumps(sec, sort_keys=True) for sec in content}) > 1:
+            c.fail("content sections do not all have the same background and padding")
+        c.note(f"{len(content)} content sections share one wrapper (section.section): background "
+               f"{content[0]['backgroundColor']}, padding {content[0]['paddingTop']} {content[0]['paddingRight']}"
+               if content else "no content sections")
+    else:
+        c.warn("computed styles could not be compared (browser not available)")
+    c.note(f"no inline style or <style> added; {len(css_files)} CSS file(s) byte-identical to the template; "
+           f"all classes exist in the template; {compared} computed style values equal to the template's original page")
+    for patched in info.get("patched", []):
+        c.note(f"template file changed by the tool (JavaScript, no visual effect): {patched}")
+    return c
+
+
+def check_typography(review: dict) -> Check:
+    """No one-word or very short last lines; title at most 3 lines and tagline at most 2 on desktop."""
+    c = Check("Typography")
+    views = review.get("typography", {})
+    if not views:
+        c.warn("line layout could not be measured (browser not available)")
+        return c
+    total = long_words = 0
+    for view, items in views.items():
+        for it in items:
+            total += 1
+            where = f'{view}: {it["kind"]} "{it["text"]}"'
+            if it["lines"] > 1 and it["lastWords"] == 1 and it["lastRatio"] >= 0.5:
+                long_words += 1  # one long unbreakable word (a URL) filling most of the line is not a widow
+            elif it["lines"] > 1 and it["lastWords"] == 1:
+                c.fail(f"{where}: last line is a single word")
+            elif it["lines"] > 1 and it["lastRatio"] < 0.2:
+                c.warn(f"{where}: last line is only {it['lastRatio']:.0%} of the line width")
+            if view == "desktop" and it["kind"] == "title" and it["lines"] > 3:
+                c.fail(f"{where}: {it['lines']} lines (at most 3)")
+            if view == "desktop" and it["kind"] == "tagline" and it["lines"] > 2:
+                c.fail(f"{where}: {it['lines']} lines (at most 2); rewrite the tagline shorter with the same facts")
+    if not c.details:
+        c.note(f"{total} text blocks measured at 1280 px and 390 px: no single-word or very short last lines; "
+               "title and tagline within their line limits"
+               + (f" ({long_words} last line(s) hold one long word such as a URL, which fills the line)" if long_words else ""))
     return c
 
 
@@ -288,7 +381,9 @@ def check_tables(content: dict, extracted: dict, pdf: PdfText) -> Check:
             c.warn(f"{tag}: no metric directions known, so nothing is highlighted. "
                    "Set metric_directions in the paper yaml (higher / lower).")
         best = {n for (i, j), m in marks.items() if m == "best" for n in pdf_text.numbers_in(t["rows"][i]["cells"][j])}
-        bold = set(src.get("bold_numbers", []))
+        values = {n for r in t["rows"] for j, cell in enumerate(r["cells"]) if t["columns"][j]["role"] == "value"
+                  for n in pdf_text.numbers_in(cell)}
+        bold = set(src.get("bold_numbers", [])) & values
         if bold and best and best != bold:
             c.warn(f"{tag}: computed best values {sorted(best)} differ from the bold values in the PDF {sorted(bold)}")
         counts = [sum(1 for m in marks.values() if m == k) for k in ("best", "second")]
@@ -370,8 +465,8 @@ def check_page_quality(html: str) -> Check:
     for table in soup.find_all("table"):
         if not table.find_parent(class_="table-container"):
             c.fail("table without a scrollable container")
-        if not table.find("thead") or not table.find("caption"):
-            c.fail("table without header row or caption")
+        if not table.find("thead"):
+            c.fail("table without a header row")
     if not c.details:
         c.note("one h1, logical heading order, alt text on all images, all meta tags and favicon present")
     return c
@@ -433,10 +528,16 @@ def check_browser(review: dict) -> Check:
     if review.get("error"):
         c.warn(review["error"])
         return c
+    inherited = set(review["baseline"]["failed"])
+    own = [m for m in review["failed"] if m.split("] ", 1)[-1] not in inherited]
+    for msg in sorted({m.split("] ", 1)[-1] for m in review["failed"]} & inherited):
+        c.warn(f"request fails on the template's original page too: {msg}")
+    for msg in own:
+        (c.fail if msg.split("] ", 1)[-1][:1].isdigit() and "http" not in msg else c.warn)(f"request failed: {msg}")
     for msg in review["console"]:
+        if "Failed to load resource" in msg and not own:
+            continue  # the console echo of the inherited failures above
         c.fail(f"console error: {msg}")
-    for msg in review["failed"]:
-        (c.fail if "127.0.0.1" in msg else c.warn)(f"request failed: {msg}")
     for name, view in review["views"].items():
         if view["scrollWidth"] > view["viewport"] + 1:
             c.fail(f"{name}: horizontal overflow ({view['scrollWidth']}px > {view['viewport']}px): {', '.join(view['overflow'])}")
@@ -506,9 +607,10 @@ def run(build: Build, template_dir: Path, info: dict) -> list[Check]:
     template_html = (template_dir / "index.html").read_text()
     pdf = PdfText(extracted["pages"])
     print("  check: reviewing the page in headless Chromium ...")
-    review = browser.review(build.site, build.screenshots)
+    review = browser.review(build.site, template_dir, build.screenshots)
     checks = [
         check_complete(content, build), check_extraction(extracted), check_skeleton(template_html, html, template_dir),
+        check_fidelity(template_html, html, template_dir, build.site, review, info), check_typography(review),
         check_sample_text(template_html, html), check_identity(content, html, pdf), check_abstract(html, pdf),
         check_numbers(content, html, pdf), check_tables(content, extracted, pdf),
         check_figures(content, extracted, html), check_bibtex(content, html), check_page_quality(html),

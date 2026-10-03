@@ -1,124 +1,29 @@
-"""HTML components that must not be guessed: figures, tables (with ranking), link buttons, extra CSS."""
+"""Table ranking and the link-button catalogue. HTML is produced in site.py by cloning template blocks."""
 from __future__ import annotations
 
 import re
-from html import escape
 
 from .common import direction_for
 
 CELL_NUM_RE = re.compile(r"-?\d+(?:,\d{3})*(?:\.\d+)?")
-BUTTON_CLASS = "external-link button is-normal is-rounded is-dark"
-LINK_KINDS = {  # kind -> (label, icon class)
+# Bulma classes that ship with the template; nothing here is defined by this tool.
+TABLE_CLASSES = ["table", "is-fullwidth", "is-hoverable"]
+TABLE_WRAPPER_CLASS = "table-container"
+LINK_KINDS = {  # kind -> (label, Font Awesome / Academicons icon class shipped with the template)
     "paper": ("Paper", "fas fa-file-pdf"),
     "arxiv": ("arXiv", "ai ai-arxiv"),
     "code": ("Code", "fab fa-github"),
     "video": ("Video", "fab fa-youtube"),
-    "data": ("Data", "fas fa-database"),
+    "data": ("Data", "far fa-images"),
     "dataset": ("Dataset", "fas fa-database"),
     "model": ("Model", "fas fa-cube"),
     "demo": ("Demo", "fas fa-desktop"),
 }
 
-EXTRA_CSS = """
 
-/* --- paper2page additions --- */
-.paper-figure {
-  margin: 1.5rem auto;
-  text-align: center;
-}
+def link_spec(kind: str) -> tuple[str, str]:
+    return LINK_KINDS.get(kind, (kind.replace("-", " ").title(), "fas fa-link"))
 
-.paper-figure img {
-  max-width: 100%;
-  max-height: 720px;
-  width: auto;
-  height: auto;
-  border-radius: 5px;
-}
-
-.paper-figure figcaption {
-  margin: 0.5rem 0;
-  font-size: 0.875rem;
-  color: #555;
-}
-
-.teaser .paper-figure {
-  margin-top: 0;
-}
-
-.paper-table {
-  margin: 1.5rem auto;
-}
-
-.paper-table table {
-  margin: 0 auto;
-  width: auto;
-  font-size: 0.95rem;
-}
-
-.paper-table caption {
-  caption-side: top;
-  padding-bottom: 0.5rem;
-  font-size: 0.875rem;
-  color: #555;
-  text-align: center;
-}
-
-.paper-table th,
-.paper-table td {
-  text-align: center !important;
-  vertical-align: middle !important;
-  white-space: nowrap;
-}
-
-.paper-table th.row-label,
-.paper-table td.row-label {
-  text-align: left !important;
-}
-"""
-
-
-# ---------- link buttons ----------
-
-def render_button(kind: str, url: str) -> str:
-    label, icon = LINK_KINDS.get(kind, (kind.replace("-", " ").title(), "fas fa-link"))
-    icon_html = f'<span class="icon"><i class="{icon}"></i></span>'
-    if url == "soon":
-        return (f'<span class="link-block"><a class="{BUTTON_CLASS}" disabled aria-disabled="true" '
-                f'title="Coming soon">{icon_html}<span>{escape(label)} (coming soon)</span></a></span>')
-    return (f'<span class="link-block"><a href="{escape(url, quote=True)}" class="{BUTTON_CLASS}">'
-            f'{icon_html}<span>{escape(label)}</span></a></span>')
-
-
-def render_links(links: dict[str, str], host_pdf: bool) -> str:
-    """Paper button first (paper.pdf, or 'coming soon' when the PDF is not hosted), then the given links."""
-    buttons = [render_button("paper", "./paper.pdf" if host_pdf else "soon")]
-    buttons += [render_button(kind, url) for kind, url in links.items() if kind != "paper"]
-    return "\n".join(buttons)
-
-
-# ---------- figures ----------
-
-def render_figure(fig: dict, caption: str, alt: str) -> str:
-    src = f"./static/images/{fig['file']}"
-    label = "" if fig.get("fallback") else f"<strong>Figure {fig['number']}.</strong> "
-    cap = f"<figcaption>{label}{escape(caption)}</figcaption>" if (caption or label) else ""
-    return (f'<figure class="paper-figure">'
-            f'<a href="{src}" target="_blank" rel="noopener" title="Open full size">'
-            f'<img src="{src}" alt="{escape(alt or caption, quote=True)}" loading="lazy" '
-            f'width="{fig["width"]}" height="{fig["height"]}"></a>{cap}</figure>')
-
-
-def render_table_image(tab: dict, caption: str) -> str:
-    """A table shown as the image cropped from the PDF (caption above, like a table)."""
-    src = f"./static/images/{tab['file']}"
-    cap = f"<figcaption><strong>Table {escape(str(tab['number']))}.</strong> {escape(caption)}</figcaption>"
-    return (f'<figure class="paper-figure">{cap}'
-            f'<a href="{src}" target="_blank" rel="noopener" title="Open full size">'
-            f'<img src="{src}" alt="{escape("Table " + str(tab["number"]) + ": " + caption, quote=True)}" '
-            f'loading="lazy" width="{tab["width"]}" height="{tab["height"]}"></a></figure>')
-
-
-# ---------- tables ----------
 
 def cell_number(cell: str) -> float | None:
     m = CELL_NUM_RE.search(cell.replace("−", "-"))
@@ -164,64 +69,3 @@ def rank_cells(table: dict) -> dict[tuple[int, int], str]:
                 for idxs in scopes.values():
                     _mark({(i, c): v for i in idxs if (v := num(i, c)) is not None}, d, marks)
     return marks
-
-
-def _header_rows(table: dict) -> str:
-    cols = table["columns"]
-    has_groups = any(c.get("group") for c in cols)
-    lead = ""
-    if any(r.get("group") for r in table["rows"]):
-        span = ' rowspan="2"' if has_groups else ""
-        lead = f'<th class="row-label" scope="col"{span}>{escape(table.get("row_group_label", ""))}</th>'
-    cls = lambda i: ' class="row-label"' if cols[i].get("role") == "label" else ""  # noqa: E731
-    if not has_groups:
-        cells = "".join(f'<th{cls(i)} scope="col">{escape(c["label"])}</th>' for i, c in enumerate(cols))
-        return f"<tr>{lead}{cells}</tr>"
-    top, bottom, i = [lead], [], 0
-    while i < len(cols):
-        g = cols[i].get("group", "")
-        if not g:
-            top.append(f'<th{cls(i)} scope="col" rowspan="2">{escape(cols[i]["label"])}</th>')
-            i += 1
-            continue
-        j = i
-        while j < len(cols) and cols[j].get("group", "") == g:
-            bottom.append(f'<th scope="col">{escape(cols[j]["label"])}</th>')
-            j += 1
-        top.append(f'<th scope="colgroup" colspan="{j - i}">{escape(g)}</th>')
-        i = j
-    return f"<tr>{''.join(top)}</tr><tr>{''.join(bottom)}</tr>"
-
-
-def _body_rows(table: dict, marks: dict) -> str:
-    rows = table["rows"]
-    with_groups = any(r.get("group") for r in rows)
-    out = []
-    for i, row in enumerate(rows):
-        tds = []
-        if with_groups and (i == 0 or rows[i - 1].get("group") != row.get("group")):
-            span = 1
-            while i + span < len(rows) and rows[i + span].get("group") == row.get("group"):
-                span += 1
-            tds.append(f'<th class="row-label" scope="rowgroup" rowspan="{span}">{escape(row.get("group", ""))}</th>')
-        for c, cell in enumerate(row["cells"]):
-            text = escape(cell)
-            if marks.get((i, c)) == "best":
-                text = f"<strong>{text}</strong>"
-            elif marks.get((i, c)) == "second":
-                text = f"<u>{text}</u>"
-            cls = ' class="row-label"' if table["columns"][c].get("role") == "label" else ""
-            tds.append(f"<td{cls}>{text}</td>")
-        out.append(f"<tr>{''.join(tds)}</tr>")
-    return "\n".join(out)
-
-
-def render_table(table: dict) -> str:
-    marks = rank_cells(table)
-    caption = f'<strong>Table {table["number"]}.</strong> {escape(table["caption"])}'
-    if marks:
-        caption += " Best in <strong>bold</strong>"
-        caption += ", second best <u>underlined</u>." if "second" in marks.values() else "."
-    return (f'<div class="paper-table"><div class="table-container">'
-            f'<table class="table is-hoverable"><caption>{caption}</caption>'
-            f"<thead>{_header_rows(table)}</thead><tbody>\n{_body_rows(table, marks)}\n</tbody></table></div></div>")

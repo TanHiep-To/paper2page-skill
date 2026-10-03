@@ -8,7 +8,6 @@ from urllib.parse import unquote, urlparse
 
 from bs4 import BeautifulSoup
 
-from .render import EXTRA_CSS
 
 SKIP_NAMES = {".git", ".DS_Store", "._Icon", "Icon\r", ".github", "node_modules"}
 KEEP_AT_ROOT = {"index.html", "paper.pdf", ".nojekyll", ".paper2page"}
@@ -78,32 +77,19 @@ def prune_assets(out: Path, html: str) -> list[str]:
     return removed
 
 
-def _drop_dead_font_faces(css_file: Path) -> None:
-    """Remove @font-face rules whose local font files do not exist (they only cause 404s)."""
-    src = css_file.read_text(errors="ignore")
+def patch_assets(out: Path, html: str) -> list[str]:
+    """The only template file ever changed: index.js must not preload frames of widgets that were removed.
 
-    def keep(m: re.Match) -> str:
-        urls = [u for u in re.findall(r"url\(\s*['\"]?([^'\")]+)", m.group(0)) if is_local(u)]
-        exists = any((css_file.parent / unquote(urlparse(u).path)).is_file() for u in urls)
-        return m.group(0) if exists or not urls else ""
-
-    cleaned = re.sub(r"@font-face\s*\{[^}]*\}", keep, src)
-    if cleaned != src:
-        css_file.write_text(cleaned)
-
-
-def patch_assets(out: Path, html: str) -> None:
-    """Append our few CSS rules; stop index.js from preloading frames of removed widgets."""
-    for css_file in (out / "static" / "css").glob("*.css"):
-        _drop_dead_font_faces(css_file)
-    css = out / "static" / "css" / "index.css"
-    if css.is_file() and "paper2page additions" not in css.read_text():
-        css.write_text(css.read_text().rstrip() + "\n" + EXTRA_CSS)
+    CSS files are never touched. Returns the list of patched files (reported to the user).
+    """
     js = out / "static" / "js" / "index.js"
     if js.is_file() and "interpolation-image-wrapper" not in html:
         src = js.read_text()
-        src = re.sub(r"^(\s*)(preloadInterpolationImages\(\);|setInterpolationImage\(0\);)", r"\1// \2", src, flags=re.M)
-        js.write_text(src)
+        new = re.sub(r"^(\s*)(preloadInterpolationImages\(\);|setInterpolationImage\(0\);)", r"\1// \2", src, flags=re.M)
+        if new != src:
+            js.write_text(new)
+            return ["static/js/index.js (two preload calls for the removed interpolation widget commented out)"]
+    return []
 
 
 def sample_tokens(template_html: str) -> list[str]:

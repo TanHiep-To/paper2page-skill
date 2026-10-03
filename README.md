@@ -72,7 +72,7 @@ build/<name>/
   extracted/       fig1.png ..., table1.png ..., extracted.json, contact_sheet.png
   content.json     page content; TODO fields are filled by the agent
   report.md        PASS / WARN / FAIL per check, extraction log, manual checklist
-  screenshots/     desktop.png (1280 px), mobile.png (390 px)
+  screenshots/     desktop.png (1280 px), mobile.png (390 px), template.png, template_vs_output.png
   site/            index.html, static/, .nojekyll, paper.pdf (only with host_pdf)
 ```
 
@@ -136,9 +136,37 @@ a new repository needs the user's confirmation (`--yes`), updates an existing re
 carries the `.paper2page` marker, and never force-pushes. No token is stored anywhere; GitHub access
 is through `gh` only.
 
+## Template fidelity
+
+The template is the design system. The renderer builds a block library from the template's own
+`index.html` and only clones those blocks, changing text, `href`, `src` and `alt`:
+
+- every content section (Method, Quantitative Results, Qualitative Results) is a clone of the
+  Abstract section, so all sections share one background and spacing;
+- figures use the template's image element in its centred media wrapper, with the teaser's caption
+  element;
+- tables use Bulma classes that ship with the template (`table-container`, `table`,
+  `is-fullwidth`, `is-hoverable`);
+- no inline style, `<style>` tag, CSS rule or new class is ever added, and the template's CSS files
+  are copied byte for byte. The one template file the tool changes is `static/js/index.js`, where two
+  calls that preload frames of the removed interpolation widget are commented out.
+
+The check "Template fidelity" fails, and blocks publishing, on any added style, changed CSS file,
+unknown class, or computed style (fonts, colours, section backgrounds and padding) that differs
+from the template's original page as rendered in Chromium. `screenshots/template_vs_output.png`
+shows both pages side by side.
+
+## Typography
+
+Content-level only, no CSS: non-breaking spaces keep author names, numbers with their units, and
+the last words of titles, headings, captions and paragraphs together; the title breaks after its
+colon when that gives balanced lines. The check "Typography" measures every text block at 1280 px
+and 390 px and reports one-word or very short last lines, a title over 3 lines, or a tagline over
+2 lines. The abstract and captions are never reworded.
+
 ## Checks in report.md
 
-Content complete, extraction, template skeleton, no template sample content, title / authors / affiliations,
+Content complete, extraction, template skeleton, template fidelity, typography, no template sample content, title / authors / affiliations,
 abstract match (fuzzy ratio >= 0.95), numbers check (every number on the page is in the PDF), table
 check, figure captions, BibTeX consistency, accessibility and meta tags, links, image and PDF sizes,
 browser review (console errors, overflow at 1280 px and 390 px, contrast).
@@ -153,6 +181,7 @@ scripts/p2plib/
   pdf_text.py   text, abstract, numbers       content.py   step 2
   figures.py    figure detection and crops    site.py      step 3
   tables.py     table detection and grids     check.py     step 4
-  render.py     figures, tables, buttons      browser.py   Chromium review
+  render.py     table ranking, link kinds     browser.py   Chromium review
+  typo.py       non-breaking spaces, title
   template.py   copy, prune, patch            publish.py   git / gh
 ```
