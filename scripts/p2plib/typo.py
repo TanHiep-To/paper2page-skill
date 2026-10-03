@@ -29,6 +29,8 @@ def bind_tail(text: str, min_chars: int, max_words: int = 5, max_chars: int = 34
         n += 1
     while n > 2 and len(" ".join(words[-n:])) > max_chars:
         n -= 1
+    if len(" ".join(words[-n:])) > max_chars:
+        return text  # the last two words would not fit one line on a phone; joining them would split a word
     return " ".join(words[:-n]) + " " + NBSP.join(words[-n:])
 
 

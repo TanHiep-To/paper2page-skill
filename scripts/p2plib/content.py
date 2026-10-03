@@ -38,7 +38,8 @@ def _authors(extracted: dict, overrides: dict[str, str]):
     if not extracted.get("authors"):
         return TODO
     return [{"name": overrides.get(a["name"], a["name"]), "pdf_name": a["name"],
-             "affiliations": a["affiliations"], "corresponding": a["corresponding"]} for a in extracted["authors"]]
+             "affiliations": a["affiliations"], "corresponding": a["corresponding"],
+             "equal_contribution": a.get("equal_contribution", False)} for a in extracted["authors"]]
 
 
 def _table(t: dict, directions: dict[str, str]) -> dict | None:
@@ -115,6 +116,7 @@ def build_fresh(extracted: dict, name: str, settings: dict) -> dict:
         "overview_figure": next((f["id"] for f in extracted["figures"] if f.get("file")), ""),
         "method": {"figure": TODO, "paragraphs": [TODO]},
         "tables": tables,
+        "quantitative_figures": [],  # optional {figure, description} entries shown under Quantitative Results
         "qualitative": [{"figure": TODO, "description": TODO}],
         "figures": figures,
     }

@@ -299,8 +299,11 @@ def check_identity(content: dict, html: str, pdf: PdfText) -> Check:
         if pdf_text.loose_key(aff["name"]) not in first:
             c.warn(f'affiliation text not found verbatim on page 1: {aff["name"]}')
     marked = [a["name"] for a in authors if a["corresponding"]]
-    if marked and "*" not in pdf.pages[0]:
-        c.warn("corresponding author marked, but no * found on page 1 of the PDF")
+    if marked and not re.search(r"[*⋆†‡]|orrespond", pdf.pages[0]):
+        c.warn("corresponding author marked, but no footnote symbol found on page 1 of the PDF")
+    equal = [a["name"] for a in authors if a.get("equal_contribution")]
+    if equal:
+        c.note(f'equal contribution (from the footnote on page 1): {", ".join(equal)}')
     if renamed:
         c.note("display-name overrides from the yaml: " + "; ".join(renamed))
     if c.status == "PASS":
@@ -337,8 +340,10 @@ def check_numbers(content: dict, html: str, pdf: PdfText) -> Check:
 def check_tables(content: dict, extracted: dict, pdf: PdfText) -> Check:
     c = Check("Table check")
     if not content["tables"]:
-        c.warn("no numeric results table on the page; confirm the paper has none "
-               "(all detected tables are listed in extracted.json)")
+        c.note("no results table on the page" + (" (quantitative results are shown as figures)"
+               if content.get("quantitative_figures") else "; confirm the paper has none (see extracted.json)"))
+        if not content.get("quantitative_figures"):
+            c.status = "WARN"
         return c
     source = {t["id"]: t for t in extracted["tables"]}
     for t in content["tables"]:

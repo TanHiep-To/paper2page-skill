@@ -57,7 +57,12 @@ def _is_marker(span: dict, body_size: float) -> bool:
     return span["size"] < 0.85 * body_size and bool(MARKER_RE.match(span["text"].strip() or "x"))
 
 
+SYMBOLS = "⋆*†‡§¶"
+SYMBOL_RUN = re.compile(f"([{re.escape(SYMBOLS)}]+)")
+
+
 def _parse_authors(spans: list[dict]) -> list[dict]:
+    """Names with their affiliation numbers and footnote symbols (⋆, *, †, ...), in printed order."""
     body = max(s["size"] for s in spans)
     authors, name, marks = [], "", ""
 
@@ -65,9 +70,8 @@ def _parse_authors(spans: list[dict]) -> list[dict]:
         nonlocal name, marks
         clean = pdf_text.squash(re.sub(r"\band\b", " ", name)).strip(" ,;")
         if clean:
-            authors.append({"name": clean.rstrip("*").strip(),
-                            "affiliations": [int(n) for n in re.findall(r"\d+", marks)],
-                            "corresponding": "*" in marks or clean.endswith("*")})
+            authors.append({"name": clean, "affiliations": [int(n) for n in re.findall(r"\d+", marks)],
+                            "symbols": "".join(c for c in marks if c in SYMBOLS)})
         name, marks = "", ""
 
     for s in spans:
@@ -77,12 +81,39 @@ def _parse_authors(spans: list[dict]) -> list[dict]:
         for part in re.split(r"(,|;|\band\b)", s["text"]):
             if part in (",", ";", "and"):
                 flush()
-            else:
-                if marks and part.strip():
-                    flush()
-                name += part
+                continue
+            for piece in SYMBOL_RUN.split(part):
+                if SYMBOL_RUN.fullmatch(piece):
+                    marks += piece
+                elif piece.strip():
+                    if marks:
+                        flush()
+                    name += piece
+                else:
+                    name += piece
     flush()
     return authors
+
+
+def _symbol_legend(page_text: str) -> dict[str, str]:
+    """Footnotes that explain author symbols, e.g. {'⋆': 'These authors contributed equally', '⋆⋆': 'Corresponding author'}."""
+    legend = {}
+    for line in page_text.splitlines():
+        if m := re.match(rf"^\s*([{re.escape(SYMBOLS)}]+)\s*(\S.*)$", line):
+            legend[m.group(1)] = m.group(2).strip()
+    return legend
+
+
+def _apply_symbols(authors: list[dict], legend: dict[str, str]) -> None:
+    """Turn footnote symbols into corresponding / equal_contribution flags.
+
+    With a footnote legend the symbol's meaning decides. Without one, a lone * means corresponding author.
+    """
+    for a in authors:
+        symbols = a.pop("symbols", "")
+        meaning = legend.get(symbols, "")
+        a["corresponding"] = "orrespond" in meaning or (bool(symbols) and not meaning and symbols == "*")
+        a["equal_contribution"] = bool(re.search(r"equal", meaning, re.I))
 
 
 def _parse_affiliations(spans: list[dict]) -> list[dict]:
@@ -93,8 +124,8 @@ def _parse_affiliations(spans: list[dict]) -> list[dict]:
             out.append({"index": int(re.search(r"\d+", s["text"]).group()), "name": ""})
         elif out:
             out[-1]["name"] += s["text"]
-    for a in out:
-        a["name"] = pdf_text.squash(a["name"]).rstrip(".,; ")
+    for a in out:  # e-mail lines that follow the last affiliation are not part of it
+        a["name"] = re.split(r"\{|\S+@", pdf_text.squash(a["name"]))[0].rstrip(".,; ")
     return [a for a in out if a["name"]]
 
 
@@ -110,6 +141,7 @@ def _header(page: pymupdf.Page) -> dict:
             affiliations += _parse_affiliations(spans)
         elif not authors and not affiliations:
             authors = _parse_authors(spans)
+    _apply_symbols(authors, _symbol_legend(pdf_text.clean(page.get_text("text"))))
     return {"title": title, "authors": authors, "affiliations": affiliations}
 
 
@@ -120,7 +152,7 @@ def _keywords(pdf: pdf_text.PdfText) -> list[str]:
         return []
     chunk = [re.sub(r"^\s*keywords?\s*[:.—-]*\s*", "", lines[start], flags=re.I)]
     for ln in lines[start + 1:start + 4]:
-        if not ln.strip() or re.match(r"^\s*(\d+\.?\s+)?[A-Z][a-z]+\s*$", ln) or re.match(r"^\s*\d+\s+\w", ln):
+        if not ln.strip() or re.match(r"^\s*(\d+\.?\s*)?([A-Z][a-z]+)?\s*$", ln) or re.match(r"^\s*\d+\s+\w", ln):
             break
         chunk.append(ln)
     return [k.strip(" .") for k in re.split(r"[,;·]", pdf_text.squash(" ".join(chunk))) if k.strip(" .")]

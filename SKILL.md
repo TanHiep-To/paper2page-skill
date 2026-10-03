@@ -154,6 +154,9 @@ Fields:
   - To show a table that is not in the list, add
     `{"id": "table2", "number": "2", "caption": "...", "display": "image", "interpretation": "..."}`
     with the id and caption from `extracted.json`.
+- `quantitative_figures`: optional entries `{figure, description}` for figures that report
+  quantitative results (charts, user studies); shown under Quantitative Results with the tables.
+  Use it when the paper's results are a figure rather than a table. Default `[]`.
 - `qualitative`: 1-3 entries `{figure, description}` for figures that show results or the system
   in use; 1-2 sentences each. Do not reuse the overview or method figure. `[]` omits the section.
 - `figures[].caption`: the printed caption. You may shorten it, never change its meaning.

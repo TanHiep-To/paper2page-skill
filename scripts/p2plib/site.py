@@ -21,6 +21,7 @@ from .common import Build, P2PError, is_todo
 
 MAX_PDF_BYTES = 5 * 1024 * 1024
 MARKER = ".paper2page"
+TITLE_TAIL_MAX = 14  # characters that fit one line of the template's h1 on a 390 px phone
 TAIL = {"paragraph": 26, "caption": 20, "tagline": 24, "heading": 8}
 
 
@@ -223,20 +224,27 @@ def _hero(soup: BeautifulSoup, blocks: Blocks, content: dict, links: dict[str, s
     h1.clear()
     lines = typo.title_parts(content["title"])
     for i, line in enumerate(lines):
-        h1.append(typo.polish(line, TAIL["heading"]) if i == len(lines) - 1 else line)
+        last = typo.bind_tail(typo.bind_numbers(line), TAIL["heading"], max_chars=TITLE_TAIL_MAX)
+        h1.append(last if i == len(lines) - 1 else line + " ")
         if i < len(lines) - 1:
             h1.append(soup.new_tag("br"))
     authors = content["authors"] if isinstance(content["authors"], list) else []
     author_div, affiliation_div = soup.select(".publication-authors")[:2]
     _fill_line(author_div, blocks.author, [
-        (typo.name(a["name"]), ",".join(str(n) for n in a["affiliations"]) + ("*" if a["corresponding"] else ""))
+        (typo.name(a["name"]), ",".join(str(n) for n in a["affiliations"])
+         + ("†" if a.get("equal_contribution") else "") + ("*" if a["corresponding"] else ""))
         for a in authors])
     _fill_line(affiliation_div, blocks.affiliation, [(a["name"], str(a["index"])) for a in content["affiliations"]])
     extra = []  # further lines are clones of the affiliation line
     if content["venue"] or content["year"]:
         extra.append([(" ".join(v for v in (content["venue"], content["year"]) if v), "")])
+    notes = []
+    if any(a.get("equal_contribution") for a in authors):
+        notes.append(("Equal" + typo.NBSP + "contribution", "†"))
     if any(a["corresponding"] for a in authors):
-        extra.append([("Corresponding" + typo.NBSP + "author", "*")])
+        notes.append(("Corresponding" + typo.NBSP + "author", "*"))
+    if notes:
+        extra.append(notes)
     anchor = affiliation_div
     for entries in extra:
         line = copy.copy(blocks.affiliation_div)
@@ -370,9 +378,18 @@ def _content_sections(blocks: Blocks, content: dict, media: _Media) -> list[Tag]
     method = content["method"]
     section("Method", method["paragraphs"], media.figure(method["figure"]))
 
-    if content["tables"]:
+    quant = [q for q in content.get("quantitative_figures", []) if _ok(q.get("figure"))]
+    if content["tables"] or quant:
         sec, column, text = blocks.new_section("Quantitative Results")
         text.decompose()
+        for q in quant:
+            if _ok(q.get("description")):
+                note = copy.copy(blocks.section.find(class_="content"))
+                note.clear()
+                note.append(blocks.new_paragraph(q["description"]))
+                column.append(note)
+            for tag in media.figure(q["figure"]):
+                column.append(tag)
         for t in content["tables"]:
             for tag in media.table(t):
                 column.append(tag)
