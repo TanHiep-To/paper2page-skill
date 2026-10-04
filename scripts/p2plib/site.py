@@ -19,7 +19,9 @@ from pathlib import Path
 import pymupdf
 from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 
-from . import content as content_mod, render, template, typo
+from PIL import Image
+
+from . import content as content_mod, figures, render, template, typo
 from .common import SKILL_DIR, Build, P2PError, is_todo
 
 MAX_PDF_BYTES = 5 * 1024 * 1024
@@ -499,6 +501,24 @@ def compress_pdf(src: Path, dst: Path) -> tuple[int, str]:
     return size, how
 
 
+# ---------- images ----------
+
+def web_images(items: list[dict], source_dir: Path) -> dict[str, bytes]:
+    """Images above the size target, re-encoded for the page: {file name: bytes}. The entries of `items`
+    get the new width and height. Smaller images are not touched and are copied as they are."""
+    out = {}
+    for item in items:
+        path = source_dir / item["file"] if item.get("file") else None
+        if path is None or not path.is_file() or path.stat().st_size <= figures.MAX_BYTES:
+            continue
+        with Image.open(path) as img:
+            data, final = figures.encode_within(img.convert("RGB"), "jpg" if path.suffix.lower() in (".jpg", ".jpeg") else "png")
+        if len(data) < path.stat().st_size:
+            out[item["file"]] = data
+            item["width"], item["height"] = final.width, final.height
+    return out
+
+
 # ---------- step ----------
 
 def run(build: Build, pdf: Path, template_dir: Path, settings: dict, home_url: str, page_url: str) -> dict:
@@ -509,6 +529,7 @@ def run(build: Build, pdf: Path, template_dir: Path, settings: dict, home_url: s
     if errors := content_mod.validate(content, extracted)[0]:
         raise P2PError(f"{build.content_json}: the block list cannot be rendered:\n  - " + "\n  - ".join(errors))
     template_html = (template_dir / "index.html").read_text()
+    compressed = web_images(extracted["figures"] + extracted["tables"], build.extracted)
     html, used = build_html(template_html, content, extracted, settings["links"], settings["host_pdf"],
                             home_url, page_url)
 
@@ -517,7 +538,11 @@ def run(build: Build, pdf: Path, template_dir: Path, settings: dict, home_url: s
     images = build.site / "static" / "images"
     images.mkdir(parents=True, exist_ok=True)
     for item in extracted["figures"] + extracted["tables"]:
-        if item["id"] in used and item.get("file"):
+        if item["id"] in used and item.get("file") and item["file"] in compressed:
+            (images / item["file"]).write_bytes(compressed[item["file"]])
+            print(f"  render: {item['file']} compressed to {len(compressed[item['file']]) // 1024} KB "
+                  f"({item['width']}x{item['height']} px) for the page")
+        elif item["id"] in used and item.get("file"):
             shutil.copyfile(build.extracted / item["file"], images / item["file"])
     info = {"host_pdf": settings["host_pdf"], "used": used}
     if settings["host_pdf"]:

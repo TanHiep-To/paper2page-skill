@@ -13,7 +13,9 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from bs4 import BeautifulSoup  # noqa: E402
 
-from p2plib import check, content, figures, site, tables  # noqa: E402
+from PIL import Image  # noqa: E402
+
+from p2plib import check, content, figures, pdf_text, site, tables  # noqa: E402
 from p2plib.common import P2PError, paper_folder, prompt_instructions, resolve_prompt, validate_name  # noqa: E402
 from p2plib.pdf_text import PdfText  # noqa: E402
 
@@ -226,6 +228,51 @@ class SkippedText(unittest.TestCase):
         self.assertIn("12.5", inside)
         self.assertNotIn("12.5", outside)
         self.assertIn("2024", outside)
+
+
+class ArxivStamp(unittest.TestCase):
+    def test_stamp_is_removed_from_text(self):
+        text = "pipeline shows\narXiv:2606.15867v3  [cs.CV]  30 Sep 2026\nthat object fidelity drops"
+        self.assertEqual(pdf_text.clean(text), "pipeline shows\nthat object fidelity drops")
+        self.assertEqual(pdf_text.squash("shows arXiv:2006.11239v2 [cs.LG] 16 Dec 2020 that"), "shows that")
+        self.assertEqual(pdf_text.clean("arXiv:hep-th/9901001v1 [hep-th] 1 Jan 1999\nTitle"), "Title")
+
+    def test_citations_are_kept(self):
+        for kept in ("arXiv preprint arXiv:2006.09011, 2020.", "arXiv:1909.12000 (2019)", "see arXiv:2006.06676v1, 2020."):
+            self.assertEqual(pdf_text.clean(kept), kept)
+
+    def test_abstract_has_no_stamp(self):
+        pdf = PdfText([pdf_text.clean("Title\nAbstract\nWe study X and the pipeline shows\n"
+                                      "arXiv:2606.15867v3  [cs.CV]  30 Sep 2026\nthat Y holds.\n1 Introduction\nText")])
+        self.assertEqual(pdf_text.extract_abstract(pdf), "We study X and the pipeline shows that Y holds.")
+        self.assertNotIn("2606.15867", pdf.numbers)
+
+
+class ImageSize(unittest.TestCase):
+    def big_image(self, tmp: Path, name: str) -> dict:
+        img = Image.effect_noise((3200, 1700), 90).convert("RGB")  # noise: the worst case for JPEG
+        img.save(tmp / name, "JPEG", quality=95)
+        return {"id": "fig1", "file": name, "width": 3200, "height": 1700}
+
+    def test_large_image_is_compressed_for_the_page(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            item = self.big_image(tmp, "fig1.jpg")
+            self.assertGreater((tmp / "fig1.jpg").stat().st_size, figures.MAX_BYTES)
+            out = site.web_images([item], tmp)
+            self.assertLessEqual(len(out["fig1.jpg"]), figures.MAX_BYTES)
+            self.assertLess(item["width"], 3200)
+            self.assertAlmostEqual(item["width"] / item["height"], 3200 / 1700, places=1)
+            with Image.open(__import__("io").BytesIO(out["fig1.jpg"])) as small:
+                self.assertEqual(small.size, (item["width"], item["height"]))
+
+    def test_small_image_is_left_alone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            Image.new("RGB", (800, 400), (200, 30, 30)).save(tmp / "fig2.png")
+            item = {"id": "fig2", "file": "fig2.png", "width": 800, "height": 400}
+            self.assertEqual(site.web_images([item], tmp), {})
+            self.assertEqual((item["width"], item["height"]), (800, 400))
 
 
 if __name__ == "__main__":

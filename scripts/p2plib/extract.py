@@ -13,7 +13,7 @@ from . import figures, pdf_text, tables
 from .common import Build, P2PError
 
 MARKER_RE = re.compile(r"^[\d,\s*†‡§¶]+$")
-ENGINE = "pymupdf-caption-anchored-2"
+ENGINE = "pymupdf-caption-anchored-3"
 APPENDIX_HEAD = re.compile(r"^(appendix|appendices|supplementa(?:ry|l) materials?)\b", re.I)
 HEADING_LINE = re.compile(r"^[A-Z][A-Za-z]+(?:\s+[A-Za-z&-]+){0,7}$")
 
@@ -50,6 +50,7 @@ def _mark_appendix(items: list[dict], start: int | None) -> int | None:
         start = min(i["page"] for i in lettered if i.get("page")) if any(i.get("page") for i in lettered) else None
     for i in items:
         i["appendix"] = i in lettered or bool(start and i.get("page") and i["page"] >= start)
+        i["part"] = "appendix" if i["appendix"] else "main"
     return start
 
 
@@ -67,6 +68,8 @@ def _header_blocks(page: pymupdf.Page) -> list[list[dict]]:
             if ln["spans"]:  # a line break is a word break
                 spans.append({"text": " ", "size": ln["spans"][-1]["size"], "flags": 0, "font": ""})
         text = "".join(s["text"] for s in spans).strip()
+        if not pdf_text.strip_arxiv_stamp(text).strip():
+            continue  # the arXiv margin stamp is not part of the header
         if re.match(r"^abstract\b", text, re.I):
             break
         if text:

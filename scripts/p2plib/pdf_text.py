@@ -12,6 +12,15 @@ NUM_RE = re.compile(r"(?<![\w.])\d[\d,]*(?:\.\d+)?(?!\w)")
 _LIGATURES = {"ﬁ": "fi", "ﬂ": "fl", "ﬀ": "ff", "ﬃ": "ffi", "ﬄ": "ffl"}
 _PUNCT = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"', "–": "-", "—": "-", "‐": "-", "‑": "-",
                         "−": "-", "­": "", " ": " "})
+# The stamp arXiv prints in the left margin of page 1: "arXiv:2006.11239v2  [cs.LG]  16 Dec 2020".
+# It is not part of the paper, and the text layer can place it in the middle of the abstract.
+_STAMP = r"arXiv:[\w.\-/]+[ \t]+\[[\w.\-]+\][ \t]+\d{1,2}[ \t]+[A-Z][a-z]{2}[ \t]+\d{4}"
+ARXIV_STAMP = re.compile(rf"(?m)^[ \t]*{_STAMP}[ \t]*(?:\n|$)|[ \t]*{_STAMP}[ \t]*")
+
+
+def strip_arxiv_stamp(text: str) -> str:
+    """Remove the stamp: its whole line when it stands alone, otherwise the stamp with one space left."""
+    return ARXIV_STAMP.sub(lambda m: "" if m.group().endswith("\n") or m.start() == 0 or text[m.start() - 1] == "\n" else " ", text)
 _ABSTRACT_END = re.compile(r"^(keywords?\b|index terms\b|(1|i)\.?\s+introduction\b|introduction$|ccs concepts\b)",
                            re.I)
 
@@ -35,8 +44,9 @@ def load(pdf: Path) -> PdfText:
 
 
 def clean(text: str) -> str:
-    """Normalise composed characters, ligatures and typographic punctuation; keep line breaks."""
-    text = unicodedata.normalize("NFC", text)
+    """Normalise composed characters, ligatures and typographic punctuation; keep line breaks.
+    The arXiv margin stamp is removed."""
+    text = strip_arxiv_stamp(unicodedata.normalize("NFC", text))
     for lig, plain in _LIGATURES.items():
         text = text.replace(lig, plain)
     return text.translate(_PUNCT)
