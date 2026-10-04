@@ -467,7 +467,9 @@ def build_html(template_html: str, content: dict, extracted: dict, links: dict[s
     soup = BeautifulSoup(template_html, "html.parser")
     media = _Media(blocks, content, extracted)
     _body(soup, blocks, content, media)
-    overview = media.files.get(next(iter(media.used), ""))  # the teaser image, else the first figure on the page
+    # og:image: the teaser image, else the first figure on the page, else the first table image
+    shown = [media.files[i] for i in media.used if i in media.files] + [media.tables[i] for i in media.used if i in media.tables]
+    overview = next((item for item in shown if item.get("file")), None)
     og_image = ""
     if overview and overview.get("file"):
         og_image = f"{page_url}static/images/{overview['file']}" if page_url else f"./static/images/{overview['file']}"
