@@ -5,8 +5,9 @@ that is not listed is left out. Navbar, title area and footer are fixed.
 
 Clone-and-fill only. The template is the design system: every element on the page is a clone of a block
 found in the template's own index.html, with text, href, src and alt changed. Nothing here adds a
-style attribute, a <style> tag, a CSS rule, or a class that the template does not ship. Tables, for
-which the template has no block, use Bulma classes that are already in the template's CSS.
+style attribute, a <style> tag, a CSS rule, or a class that the template does not ship. Tables,
+captions and narrow figures, for which the template has no block, use Bulma classes that are already
+in the template's CSS. The one addition is the MathJax script tag, on a page that shows an equation.
 """
 from __future__ import annotations
 
@@ -14,6 +15,8 @@ import copy
 import json
 import re
 import shutil
+import statistics
+from collections import Counter
 from pathlib import Path
 
 import pymupdf
@@ -21,13 +24,18 @@ from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 
 from PIL import Image
 
-from . import content as content_mod, figures, render, template, typo
+from . import browser, content as content_mod, figures, render, template, typo
 from .common import SKILL_DIR, Build, P2PError, is_todo
 
 MAX_PDF_BYTES = 5 * 1024 * 1024
 MARKER = ".paper2page"
 TITLE_TAIL_MAX = 13  # characters that fit one line of the template's h1 on a 390 px phone ("KOL Generation", 14, does not)
 TAIL = {"paragraph": 26, "caption": 20, "tagline": 24, "heading": 8}
+FULL_WIDTH_RATIO = 0.85  # a crop at least this wide, relative to the PDF's text width, spans the full text width
+BODY_PX = 16.0           # body text of the page when it cannot be measured in the browser (Bulma's 1rem)
+EQUATION_ID = re.compile(r"fig(eq|equation)", re.I)
+EQUATION_LABEL = re.compile(r"^((?:Equation|Eq\.)\s*\([^)]+\)[:.]?)\s*")
+ONE_LINE_CHARS = {"mobile": 45, "tablet-only": 85, "desktop": 115}  # only without a browser to measure with
 
 
 def _ok(value) -> bool:
@@ -50,7 +58,7 @@ class Blocks:
         self.teaser = s.select_one("section.teaser")
         if not self.teaser or not self.teaser.find("h2"):
             raise P2PError("The template has no teaser block (section.teaser with a caption) to clone.")
-        self.caption = copy.copy(self.teaser.find("h2"))              # the teaser's caption element
+        self.alignment = iter(())                                      # per caption, in page order: see new_caption
         img = s.find("img")
         self.image = copy.copy(img) if img else None                   # the template's <img> element
         media = next((d for d in s.select("div.content.has-text-centered") if d.find(["video", "img"])), None)
@@ -91,10 +99,14 @@ class Blocks:
         p.string = typo.polish(text, TAIL["paragraph"])
         return p
 
-    def new_caption(self, label: str, text: str) -> Tag:
-        cap = copy.copy(self.caption)
+    def new_caption(self, label: str, text: str, place: str) -> Tag:
+        """A caption paragraph, the same for figures, tables and equations: smaller than the body text, its
+        label bold. `place` is where it sits: "below" its image or equation, or "above" its table."""
+        if not label and (m := EQUATION_LABEL.match(text)):  # "Equation (1): ..." carries its own label
+            label, text = m.group(1).replace(" ", typo.NBSP), text[m.end():]
+        cap = copy.copy(self.paragraph)
         cap.clear()
-        cap.attrs = {"class": cap.get("class", [])}
+        cap["class"] = [*render.CAPTION_CLASSES, *next(self.alignment, ["has-text-justified"]), render.CAPTION_GAP[place]]
         if label:
             strong = self.soup.new_tag("strong")
             strong.string = typo.bind_numbers(label)
@@ -109,12 +121,35 @@ class Blocks:
         img["loading"], img["width"], img["height"] = "lazy", str(item["width"]), str(item["height"])
         return img
 
-    def new_figure(self, item: dict, alt: str, label: str, caption: str) -> list[Tag]:
-        """Centred image (the template's centred media wrapper) followed by the teaser's caption element."""
+    def new_figure(self, item: dict, alt: str, label: str, caption: str, narrow: bool = False,
+                   place: str = "below") -> list[Tag]:
+        """Centred image (the template's centred media wrapper) with its caption: below the image for a
+        figure, above it for a table. A single-column figure sits in a narrower Bulma column."""
         wrap = copy.copy(self.media)
         wrap.clear()
         wrap.append(self.new_image(item, alt))
-        return [wrap, self.new_caption(label, caption)]
+        if place == "below":
+            wrap.append(self.new_caption(label, caption, place))
+            tags = [wrap]
+        else:
+            tags = [self.new_caption(label, caption, place), wrap]
+        if not narrow:
+            return tags
+        row = self.soup.new_tag("div", attrs={"class": render.NARROW_ROW})
+        column = self.soup.new_tag("div", attrs={"class": render.NARROW_COLUMN})
+        row.append(column)
+        for tag in tags:
+            column.append(tag)
+        return [row]
+
+    def new_equation(self, latex: str, caption: str) -> list[Tag]:
+        """A display equation for MathJax, centred and at the size of the body text, with its caption below."""
+        wrap = copy.copy(self.media)
+        wrap.clear()
+        wrap.append(f"\\[{latex.strip()}\\]")
+        if caption:
+            wrap.append(self.new_caption("", caption, "below"))
+        return [wrap]
 
     def new_section(self, title: str) -> tuple[Tag, Tag, Tag]:
         """A clone of the Abstract section: (section, the column to append blocks to, its text block)."""
@@ -143,8 +178,11 @@ class Blocks:
 
 # ---------- head, navbar, footer ----------
 
-def _head(soup: BeautifulSoup, content: dict, og_image: str) -> None:
+def _head(soup: BeautifulSoup, content: dict, og_image: str, mathjax: bool) -> None:
     soup.html["lang"] = "en"
+    if mathjax:  # the only addition to the template: one script tag, no CSS
+        soup.head.append(soup.new_tag("script", attrs={"async": "", "src": render.MATHJAX_SRC}))
+        soup.head.append("\n")
     for script in soup.find_all("script"):
         if "googletagmanager" in (script.get("src") or "") or "gtag(" in script.get_text():
             script.decompose()
@@ -270,8 +308,11 @@ def _hero(soup: BeautifulSoup, blocks: Blocks, content: dict, links: dict[str, s
 class _Media:
     """Figures and tables from extracted.json, turned into template blocks."""
 
-    def __init__(self, blocks: Blocks, content: dict, extracted: dict) -> None:
+    def __init__(self, blocks: Blocks, content: dict, extracted: dict, layout: dict) -> None:
         self.blocks = blocks
+        self.layout = layout
+        self.narrow: list[str] = []         # files of the single-column figures
+        self.equations: list[dict] = []     # {"id", "mode": "mathjax" | "image", "file"}
         self.files = {f["id"]: f for f in extracted["figures"]}
         self.tables = {t["id"]: t for t in extracted["tables"]}
         self.notes = {f["id"]: f for f in content["figures"]}
@@ -290,24 +331,51 @@ class _Media:
     def alt(self, fig_id: str) -> str:
         return self.notes.get(fig_id, {}).get("alt") or self.notes.get(fig_id, {}).get("caption", "")
 
+    def is_narrow(self, src: dict) -> bool:
+        """A crop narrower than the PDF's text width (one column of two, or a small figure) stays narrower."""
+        width, bbox = self.layout.get("text_width"), src.get("bbox")
+        narrow = bool(width and bbox and not src.get("fallback") and (bbox[2] - bbox[0]) / width < FULL_WIDTH_RATIO)
+        if narrow:
+            self.narrow.append(src["file"])
+        return narrow
+
+    def equation(self, fig_id: str, note: dict) -> list[Tag]:
+        """MathJax when the note has the LaTeX; otherwise the crop, scaled so its symbols match the body text."""
+        caption = note.get("caption", "")
+        if _ok(note.get("latex")):
+            self.equations.append({"id": fig_id, "mode": "mathjax", "file": ""})
+            return self.blocks.new_equation(note["latex"], caption)
+        src = self.source(fig_id)
+        bbox, body_pt = src.get("bbox"), self.layout.get("body_pt")
+        if bbox and body_pt:  # PDF points -> CSS px at the ratio of the two body font sizes
+            scale = self.layout.get("body_px", BODY_PX) / body_pt
+            src = {**src, "width": round((bbox[2] - bbox[0]) * scale), "height": round((bbox[3] - bbox[1]) * scale)}
+        self.equations.append({"id": fig_id, "mode": "image", "file": src["file"]})
+        return self.blocks.new_figure(src, self.alt(fig_id), "", caption)
+
     def figure(self, fig_id: str) -> list[Tag]:
         if not _ok(fig_id):
             return []
+        note = self.notes.get(fig_id, {})
+        if _ok(note.get("latex")) or EQUATION_ID.match(fig_id) or EQUATION_LABEL.match(note.get("caption", "")):
+            return self.equation(fig_id, note)
         src = self.source(fig_id)
         label = "" if src.get("fallback") else f"Figure {src['number']}."
-        return self.blocks.new_figure(src, self.alt(fig_id), label, self.notes.get(fig_id, {}).get("caption", ""))
+        return self.blocks.new_figure(src, self.alt(fig_id), label, note.get("caption", ""), self.is_narrow(src))
 
     def table(self, t: dict) -> list[Tag]:
         """An HTML table when its grid was verified against the text layer, otherwise the cropped image."""
         if t.get("display") == "html" and t.get("columns"):
-            return [self.blocks.new_caption(f"Table {t['number']}.", _table_caption(t)), _html_table(self.blocks.soup, t)]
+            return [self.blocks.new_caption(f"Table {t['number']}.", _table_caption(t), "above"),
+                    _html_table(self.blocks.soup, t)]
         src = self.tables.get(t["id"])
         if not src or not src.get("file"):
             raise P2PError(f'Table "{t["id"]}" has no image crop. Set one with `p2p.py recrop --table ...`, '
                            "or remove the table from content.json.")
         self.used.append(t["id"])
         caption = t.get("caption") or src["caption"]
-        return self.blocks.new_figure(src, f"Table {src['number']}: {caption}", f"Table {src['number']}.", caption)
+        return self.blocks.new_figure(src, f"Table {src['number']}: {caption}", f"Table {src['number']}.", caption,
+                                      self.is_narrow(src), "above")
 
 
 def _table_caption(t: dict) -> str:
@@ -464,22 +532,68 @@ def _body(soup: BeautifulSoup, blocks: Blocks, content: dict, media: _Media) -> 
 
 
 def build_html(template_html: str, content: dict, extracted: dict, links: dict[str, str],
-               host_pdf: bool, home_url: str, page_url: str) -> tuple[str, list[str]]:
+               host_pdf: bool, home_url: str, page_url: str, layout: dict | None = None) -> tuple[str, list[str]]:
+    """`layout` carries what the text alone does not say: "text_width" and "body_pt" of the PDF, "body_px" of
+    the page, and "align", the alignment classes of each caption in page order. Without it every figure is
+    full width and every caption justified. It gets "narrow" and "equations" back, for the checks."""
+    layout = {} if layout is None else layout
     blocks = Blocks(template_html)
+    blocks.alignment = iter(layout.get("align") or ())
     soup = BeautifulSoup(template_html, "html.parser")
-    media = _Media(blocks, content, extracted)
+    media = _Media(blocks, content, extracted, layout)
     _body(soup, blocks, content, media)
+    layout.update(narrow=media.narrow, equations=media.equations)
     # og:image: the teaser image, else the first figure on the page, else the first table image
     shown = [media.files[i] for i in media.used if i in media.files] + [media.tables[i] for i in media.used if i in media.tables]
     overview = next((item for item in shown if item.get("file")), None)
     og_image = ""
     if overview and overview.get("file"):
         og_image = f"{page_url}static/images/{overview['file']}" if page_url else f"./static/images/{overview['file']}"
-    _head(soup, content, og_image)
+    _head(soup, content, og_image, any(e["mode"] == "mathjax" for e in media.equations))
     _navbar(soup, home_url)
     _hero(soup, blocks, content, links, host_pdf)
     _footer(soup, links, host_pdf)
     return soup.decode(formatter="html5"), media.used
+
+
+# ---------- layout ----------
+
+def pdf_metrics(pdf: Path) -> dict:
+    """Body font size and text width of the PDF, in points: the scale for equation crops and figure widths."""
+    sizes, widths = Counter(), []
+    with pymupdf.open(pdf) as doc:
+        for page in doc:
+            left, right = [], []
+            for block in page.get_text("dict")["blocks"]:
+                lines = [ln for ln in block.get("lines", []) if abs(ln["dir"][0] - 1) < 0.01]  # not a margin stamp
+                chars = sum(len(span["text"].strip()) for ln in lines for span in ln["spans"])
+                for ln in lines:
+                    for span in ln["spans"]:
+                        sizes[round(span["size"], 1)] += len(span["text"].strip())
+                if chars > 40:
+                    left.append(block["bbox"][0])
+                    right.append(block["bbox"][2])
+            if left:
+                widths.append(max(right) - min(left))
+    return {"body_pt": sizes.most_common(1)[0][0] if sizes else None,
+            "text_width": statistics.median(widths) if widths else None}
+
+
+def caption_alignment(lines: dict[str, list[int]], texts: list[str]) -> list[list[str]]:
+    """One-line captions centred, longer ones justified, per width range of Bulma's responsive helpers.
+
+    `lines` is the measured line count of every caption per range; without a browser it is estimated
+    from the length of the text.
+    """
+    out = []
+    for i, text in enumerate(texts):
+        one = [view for view, limit in ONE_LINE_CHARS.items()
+               if (lines[view][i] <= 1 if lines.get(view) and i < len(lines[view]) else len(text) <= limit)]
+        if len(one) == len(ONE_LINE_CHARS):
+            out.append(["has-text-centered"])
+        else:
+            out.append(["has-text-justified"] + [f"has-text-centered-{view}" for view in one])
+    return out
 
 
 # ---------- PDF ----------
@@ -530,8 +644,9 @@ def run(build: Build, pdf: Path, template_dir: Path, settings: dict, home_url: s
         raise P2PError(f"{build.content_json}: the block list cannot be rendered:\n  - " + "\n  - ".join(errors))
     template_html = (template_dir / "index.html").read_text()
     compressed = web_images(extracted["figures"] + extracted["tables"], build.extracted)
-    html, used = build_html(template_html, content, extracted, settings["links"], settings["host_pdf"],
-                            home_url, page_url)
+    layout = {**pdf_metrics(pdf), "body_px": BODY_PX}
+    args = (template_html, content, extracted, settings["links"], settings["host_pdf"], home_url, page_url)
+    html, used = build_html(*args, layout)
 
     template.reset_dir(build.site)
     template.copy_template(template_dir, build.site)
@@ -552,6 +667,14 @@ def run(build: Build, pdf: Path, template_dir: Path, settings: dict, home_url: s
     (build.site / ".nojekyll").write_text("")
     (build.site / MARKER).write_text("Generated by paper2page (build-page skill). Safe to overwrite.\n")
     (build.site / "index.html").write_text(html)
+    # second pass: the captions' line counts and the body font size are known only once the page is laid out
+    texts = [p.get_text() for p in BeautifulSoup(html, "html.parser").select(render.CAPTION_SELECTOR)]
+    measured = browser.caption_layout(build.site, render.CAPTION_SELECTOR, render.BODY_TEXT_SELECTOR) if texts else {}
+    layout.update(align=caption_alignment(measured.get("lines", {}), texts), body_px=measured.get("body_px") or BODY_PX)
+    html, used = build_html(*args, layout)
+    (build.site / "index.html").write_text(html)
+    info.update(narrow=layout["narrow"], equations=layout["equations"], text_width_pt=layout["text_width"],
+                body_pt=layout["body_pt"], captions_measured=bool(measured) or not texts)
     info["patched"] = template.patch_assets(build.site, html)
     info["added"] = template.add_missing_webfonts(build.site, SKILL_DIR / ".cache")
     removed = template.prune_assets(build.site, html)

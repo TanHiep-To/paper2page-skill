@@ -15,12 +15,14 @@ from . import browser, content as content_mod, pdf_text
 from .common import Build, is_todo, prompt_instructions
 from .figures import MAX_BYTES
 from .pdf_text import PdfText
-from .render import cell_number, rank_cells
+from .render import CAPTION_LABEL, cell_number, rank_cells
 from .site import MAX_PDF_BYTES
 from .template import ATTRIBUTION_HINT, is_local, local_refs, sample_tokens
 
 ORDER = {"PASS": 0, "WARN": 1, "FAIL": 2}
 ABSTRACT_MIN_RATIO = 0.95
+EQUATION_MAX_LINES = 3     # a rendered equation is at most this many body lines tall
+NARROW_MAX_RATIO = 0.70    # a single-column figure is at most this wide, relative to the text column, on desktop
 VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
 OPTIONAL_CLOSE = {"p", "li", "td", "th", "tr", "thead", "tbody", "option", "dt", "dd"}
 MANUAL = [
@@ -477,7 +479,7 @@ def check_page_quality(html: str) -> Check:
     for name, present in need.items():
         if not present:
             c.fail(f"missing {name}")
-    for p in soup.select("section p"):
+    for p in soup.select("section p:not(.is-size-7)"):  # body paragraphs; a caption keeps the paper's wording
         sentences = len(re.findall(r"[.!?](?:\s|$)", p.get_text(" ", strip=True)))
         if sentences > 4:
             c.warn(f'paragraph with {sentences} sentences: "{p.get_text(" ", strip=True)[:50]}..."')
@@ -566,6 +568,86 @@ def check_browser(review: dict) -> Check:
         c.warn(f"low contrast (template colour): {' '.join(item.split())}")
     if not c.details:
         c.note("no console errors, no horizontal overflow at 1280 px and 390 px, all images load")
+    return c
+
+
+def _views(review: dict, c: Check) -> dict:
+    views = review.get("format") or {}
+    if not views:
+        c.warn("could not be measured (browser not available)")
+    return views
+
+
+def check_captions(html: str, review: dict) -> Check:
+    """Captions are paragraphs, never headings, and never larger than the body text."""
+    c = Check("Captions")
+    soup = BeautifulSoup(html, "html.parser")
+    for h in soup.find_all(re.compile(r"^h[1-6]$")):
+        if h.find_parent(class_="teaser"):
+            continue  # the teaser caption is the one caption that uses the template's subtitle element
+        text = h.get_text(" ", strip=True)
+        if re.match(CAPTION_LABEL, text) or (h.name != "h1" and "title" not in h.get("class", [])):
+            c.fail(f'caption inside a heading element: <{h.name}> "{text[:60]}" (only section titles are headings)')
+    sizes, count = set(), 0
+    for view, data in _views(review, c).items():
+        count = max(count, len(data["captions"]))
+        for cap in data["captions"]:
+            sizes.add(cap["fontPx"])
+            if cap["heading"]:
+                c.fail(f'{view}: caption inside a heading element: <{cap["heading"]}> "{cap["text"]}"')
+            if cap["fontPx"] > data["bodyPx"] + 0.01:
+                c.fail(f'{view}: caption "{cap["text"]}" is {cap["fontPx"]:g}px, larger than the body text ({data["bodyPx"]:g}px)')
+    if not c.details:
+        body = next(iter(review["format"].values()))["bodyPx"]
+        c.note(f"{count} caption(s), all paragraphs outside heading elements" + (
+            f", {'/'.join(f'{s:g}' for s in sorted(sizes))}px against {body:g}px body text at 1280 px and 390 px" if count else ""))
+    return c
+
+
+def check_equations(review: dict, info: dict) -> Check:
+    """A rendered equation is at the scale of the body text: at most 3 body lines tall."""
+    c = Check("Equations")
+    tallest, limit, kinds = 0.0, 0.0, set()
+    for view, data in _views(review, c).items():
+        limit = EQUATION_MAX_LINES * data["line"]
+        if data["unrendered"]:
+            c.fail(f"{view}: {data['unrendered']} equation(s) not rendered (MathJax did not run); the LaTeX source is shown")
+        for eq in data["equations"]:
+            tallest = max(tallest, eq["height"])
+            kinds.add(eq["kind"])
+            if eq["height"] > limit + 0.5:
+                c.fail(f"{view}: equation ({eq.get('file') or 'MathJax'}) is {eq['height']:.0f}px tall, more than "
+                       f"{EQUATION_MAX_LINES} x the body line height ({data['line']:g}px)")
+    expected = len(info.get("equations") or [])
+    if not c.details and not expected:
+        c.note("no equation on the page")
+    elif not c.details:
+        how = " and ".join(sorted({"mathjax": "MathJax", "image": "the crop scaled to the body text"}[k] for k in kinds))
+        c.note(f"{expected} equation(s) rendered with {how}; tallest {tallest:.0f}px "
+               f"(limit {limit:.0f}px = {EQUATION_MAX_LINES} x the body line height)")
+    return c
+
+
+def check_figure_sizes(review: dict, info: dict) -> Check:
+    """Single-column figures stay narrower than the text column; no figure is shown above its natural size."""
+    c = Check("Figure sizes")
+    narrow, widest, total = set(info.get("narrow") or []), 0.0, 0
+    for view, data in _views(review, c).items():
+        total = max(total, len(data["figures"]))
+        for fig in data["figures"]:
+            if fig["natural"] and fig["width"] > fig["natural"] + 1:
+                c.fail(f"{view}: {fig['file']} is shown {fig['width']:.0f}px wide, above its natural {fig['natural']}px")
+            if view == "desktop" and fig["file"] in narrow and fig["content"]:
+                ratio = fig["width"] / fig["content"]
+                widest = max(widest, ratio)
+                if ratio > NARROW_MAX_RATIO + 0.005:
+                    c.fail(f"desktop: single-column figure {fig['file']} is {ratio:.0%} of the content width "
+                           f"(at most {NARROW_MAX_RATIO:.0%})")
+    if not c.details:
+        c.note(f"{total} image(s), none above its natural size; " + (
+            f"{len(narrow)} single-column ({', '.join(sorted(narrow))}), widest {widest:.0%} of the content width "
+            f"on desktop (limit {NARROW_MAX_RATIO:.0%}); the others span the full text width" if narrow
+            else "all span the full text width in the PDF and use the full content width"))
     return c
 
 
@@ -774,11 +856,13 @@ def run(build: Build, template_dir: Path, info: dict) -> list[Check]:
     template_html = (template_dir / "index.html").read_text()
     pdf = PdfText(extracted["pages"])
     print("  check: reviewing the page in headless Chromium ...")
-    review = browser.review(build.site, template_dir, build.screenshots)
+    review = browser.review(build.site, template_dir, build.screenshots,
+                            [e["file"] for e in info.get("equations") or [] if e.get("file")])
     checks = [
         check_complete(content, build), check_extraction(extracted), check_layout(content, extracted),
         check_instructions(content, extracted, html, pdf, build), check_skeleton(template_html, html, template_dir),
         check_fidelity(template_html, html, template_dir, build.site, review, info), check_typography(review),
+        check_captions(html, review), check_equations(review, info), check_figure_sizes(review, info),
         check_sample_text(template_html, html), check_identity(content, html, pdf), check_abstract(content, html, pdf),
         check_numbers(content, html, pdf), check_tables(content, extracted, pdf),
         check_figures(content, extracted, html), check_bibtex(content, html), check_page_quality(html),

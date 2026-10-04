@@ -15,7 +15,7 @@ from bs4 import BeautifulSoup  # noqa: E402
 
 from PIL import Image  # noqa: E402
 
-from p2plib import check, content, figures, pdf_text, site, tables  # noqa: E402
+from p2plib import check, content, figures, pdf_text, render as render_mod, site, tables  # noqa: E402
 from p2plib.common import P2PError, paper_folder, prompt_instructions, resolve_prompt, validate_name  # noqa: E402
 from p2plib.pdf_text import PdfText  # noqa: E402
 
@@ -37,9 +37,11 @@ def make_content(blocks):
             "bibtex": "@misc{x,\n  title = {Demo: A Paper},\n}"}
 
 
-def render(blocks):
-    html, used = site.build_html((TEMPLATE / "index.html").read_text(), make_content(blocks), EXTRACTED,
-                                 {"code": "soon"}, False, "./", "")
+def render(blocks, layout=None, extracted=EXTRACTED, figures=()):
+    data = make_content(blocks)
+    data["figures"] += list(figures)
+    html, used = site.build_html((TEMPLATE / "index.html").read_text(), data, extracted,
+                                 {"code": "soon"}, False, "./", "", layout)
     return BeautifulSoup(html, "html.parser"), used
 
 
@@ -204,6 +206,88 @@ class Rendering(unittest.TestCase):
         order = [("teaser" if "teaser" in s.get("class", []) else s.get("id") or "section")
                  for s in page.body.find_all("section", recursive=False)][1:]
         self.assertEqual(order, ["section", "teaser", "BibTeX"])
+
+
+class Formatting(unittest.TestCase):
+    """Captions, single-column figures and equations."""
+    SECTION = [{"type": "section", "title": "Results", "items": [
+        {"type": "figure", "id": "fig2"}, {"type": "table", "id": "table1"}, {"type": "figure", "id": "figEq1"}]}]
+    WIDTHS = {"fig2": [100, 50, 300, 150], "figEq1": [200, 100, 300, 120]}  # PDF points; the text is 400 wide
+    EQUATION = {"id": "figEq1", "caption": "Equation (1): the score.", "alt": "Equation"}
+
+    def page(self, layout=None, **note):
+        extracted = json.loads(json.dumps(EXTRACTED))
+        extracted["figures"].append({"id": "figEq1", "number": "Eq1", "caption": "", "fallback": False,
+                                     "file": "figEq1.png", "width": 600, "height": 120, "page": 3})
+        for f in extracted["figures"]:
+            f["bbox"] = self.WIDTHS.get(f["id"], [0, 0, 400, 100])
+        return render(self.SECTION, layout, extracted, [{**self.EQUATION, **note}])
+
+    def test_captions_are_paragraphs_with_a_bold_label(self):
+        page, _ = self.page()
+        self.assertEqual([h.get_text(strip=True) for h in page.select("section.section h2")], ["Results"])
+        captions = page.select(render_mod.CAPTION_SELECTOR)
+        self.assertEqual([c.strong.get_text().replace("\u00a0", " ") for c in captions],
+                         ["Figure 2.", "Table 1.", "Equation (1):"])
+        self.assertEqual({tuple(c["class"][:2]) for c in captions}, {tuple(render_mod.CAPTION_CLASSES)})
+        figure, table = captions[0], captions[1]
+        self.assertEqual(figure.find_previous_sibling().name, "img")       # below the image
+        self.assertEqual(table.find_next_sibling().name, "div")            # above the table
+        self.assertIsNotNone(table.find_next_sibling().find("img"))
+
+    def test_only_classes_of_the_template(self):
+        tpl = BeautifulSoup((TEMPLATE / "index.html").read_text(), "html.parser")
+        page, _ = self.page({"text_width": 400, "body_pt": 10, "body_px": 16,
+                             "align": [["has-text-justified", "has-text-centered-desktop"]]})
+        used = {cls for el in page.find_all(class_=True) for cls in el["class"]}
+        self.assertEqual(used - check._known_classes(tpl, TEMPLATE), set())
+        self.assertEqual({el["style"] for el in page.find_all(style=True)} - {el["style"] for el in tpl.find_all(style=True)}, set())
+
+    def test_single_column_figure_is_narrower(self):
+        page, _ = self.page({"text_width": 400})
+        narrow = page.select("div.columns > div.column.is-8.is-offset-2 img")
+        self.assertEqual([i["src"].split("/")[-1] for i in narrow], ["fig2.png"])  # 200 of 400 pt; table1 spans the text
+        page, _ = self.page()
+        self.assertFalse(page.select("div.column.is-offset-2"))
+
+    def test_alignment_follows_the_measured_lines(self):
+        self.assertEqual(site.caption_alignment({"mobile": [3, 1], "tablet-only": [1, 1], "desktop": [1, 1]}, ["a", "b"]),
+                         [["has-text-justified", "has-text-centered-tablet-only", "has-text-centered-desktop"],
+                          ["has-text-centered"]])
+        self.assertEqual(site.caption_alignment({}, ["Short.", "x" * 200]), [["has-text-centered"], ["has-text-justified"]])
+        page, _ = self.page({"align": [["has-text-centered"]]})
+        self.assertIn("has-text-centered", page.select(render_mod.CAPTION_SELECTOR)[0]["class"])
+
+    def test_equation_with_latex_uses_mathjax(self):
+        layout = {}
+        page, used = self.page(layout, latex="S(e) = \\max(0, x)")
+        scripts = [s["src"] for s in page.select("head script[src]") if "mathjax" in s["src"]]
+        self.assertEqual(scripts, [render_mod.MATHJAX_SRC])
+        self.assertIn("\\[S(e) = \\max(0, x)\\]", page.get_text())
+        self.assertNotIn("figEq1", used)
+        self.assertEqual(layout["equations"], [{"id": "figEq1", "mode": "mathjax", "file": ""}])
+
+    def test_equation_without_latex_is_the_crop_at_body_scale(self):
+        page, used = self.page({"body_pt": 10, "body_px": 16})
+        img = page.select_one('img[src$="figEq1.png"]')
+        self.assertEqual((img["width"], img["height"]), ("160", "32"))  # 100 x 20 pt at 16 px per 10 pt
+        self.assertFalse([s for s in page.select("head script[src]") if "mathjax" in s["src"]])
+        self.assertIn("figEq1", used)
+
+    def test_checks(self):
+        ok = {"bodyPx": 16, "line": 24, "unrendered": 0, "captions": [{"text": "Figure 1. x", "tag": "p", "heading": "", "fontPx": 12}],
+              "equations": [{"kind": "mathjax", "height": 60}],
+              "figures": [{"file": "fig2.png", "width": 488, "natural": 800, "content": 744}]}
+        review, info = {"format": {"desktop": ok}}, {"narrow": ["fig2.png"], "equations": [{"id": "figEq1"}]}
+        html = '<section><h2 class="title is-3">Results</h2><p>Figure 1. x</p></section>'
+        self.assertEqual([check.check_captions(html, review).status, check.check_equations(review, info).status,
+                          check.check_figure_sizes(review, info).status], ["PASS"] * 3)
+        bad = json.loads(json.dumps(ok))
+        bad["captions"][0]["fontPx"], bad["equations"][0]["height"], bad["figures"][0]["width"] = 20, 173, 744
+        review = {"format": {"desktop": bad}}
+        heading = '<section><h2 class="subtitle">Figure 1. x</h2></section>'
+        self.assertEqual([check.check_captions(html, review).status, check.check_captions(heading, {"format": {"desktop": ok}}).status,
+                          check.check_equations(review, info).status, check.check_figure_sizes(review, info).status], ["FAIL"] * 4)
 
 
 class SkippedText(unittest.TestCase):

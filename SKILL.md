@@ -36,8 +36,20 @@ The template is the design system and is followed 100%. The renderer only clones
 in the template's own `index.html` (navbar, title, author and affiliation lines, link button,
 teaser, the Abstract section as the standard section, heading, paragraph, image, caption, BibTeX,
 footer) and changes their text, `href`, `src` and `alt`. Every content section is a clone of the
-Abstract section, so all sections share one background and spacing. Tables, for which the template
-has no block, use Bulma classes already shipped in the template's CSS.
+Abstract section, so all sections share one background and spacing. Tables, captions and narrow
+figures, for which the template has no block, use Bulma classes already shipped in the template's
+CSS. The one addition is the MathJax script tag on a page that shows an equation.
+
+Captions, equations and figure widths are formatted by the renderer; do not try to steer them:
+- A caption is a paragraph below the body text size (`is-size-7 has-text-grey-dark`), never a
+  heading; its label is bold; it sits below a figure and above a table; one line is centred, more
+  lines are justified. Only section titles are headings, and only the teaser caption uses the
+  template's subtitle element.
+- A figure narrower than the PDF's text width (one column of two, or a small figure) is shown in a
+  narrower column; a full-width figure uses the full content width. Nothing is upscaled.
+- The checks "Captions", "Equations" and "Figure sizes" in `report.md` fail on a caption in a
+  heading or larger than the body text, an equation taller than 3 body lines, and a single-column
+  figure wider than 70% of the content width.
 
 The page is flexible in content and order, never in style: `content.json` holds an ordered list of
 `blocks` (teaser, abstract, any number of sections with any titles, bibtex) and the renderer follows
@@ -249,6 +261,14 @@ it is.
 
 - `figures[].caption`: the printed caption. You may shorten it, never change its meaning.
   `figures[].alt`: a short literal description of what the image shows.
+- Equations: an equation is a manual crop named `figEq<N>` (`recrop --fig Eq1 ...`) with a note in
+  `figures[]` whose caption starts with "Equation (N):". Add `"latex"` to that note: the equation
+  transcribed from the PDF as LaTeX, without delimiters and without the number, e.g.
+  `"latex": "S(e) = \\max\\left(0, \\sum_{f \\in \\mathcal{F}} w_f \\phi_f(e)\\right),"`. Compare every symbol,
+  subscript and punctuation mark with the PDF text of that crop (`extracted.json` > `pages`, or the
+  crop image) before rendering. It is then rendered with MathJax at the size of the body text. If
+  the equation cannot be transcribed with certainty, leave `latex` out: the crop is shown instead,
+  scaled to the body text.
 - Link buttons: Paper and Code are always shown; without a URL they read "(coming soon)". The home
   icon in the navbar points to the page itself.
 - Links: never add or change a link yourself, even one printed in the paper. If the paper gives a
@@ -275,7 +295,8 @@ The same command runs every quality check and takes the screenshots. Then look a
 figures are readable, the table fits (it may scroll sideways on mobile), nothing overlaps or
 overflows. Open `screenshots/template_vs_output.png` as well: the template's original page and the
 built page side by side; navbar, title area and footer must look the same apart from the text.
-Read `report.md`, in particular "Layout", "Template fidelity" and "Typography", and with a prompt
+Read `report.md`, in particular "Layout", "Template fidelity", "Typography", "Captions", "Equations"
+and "Figure sizes", and with a prompt
 "Instructions": go through `prompt_used.md` once more and confirm on the screenshots that each
 instruction is visibly followed and that nothing from a skipped part is on the page. If the paper
 has a case file in `$SKILL/tests/cases/`, also run
@@ -297,7 +318,7 @@ Show the user:
 - with a prompt: the section "Instructions applied" of `report.md` (each instruction, its status and
   how it was applied or why not), and what was left out;
 - both screenshots and `screenshots/template_vs_output.png`;
-- the "Layout", "Template fidelity" and "Typography" results;
+- the "Layout", "Template fidelity", "Typography", "Captions", "Equations" and "Figure sizes" results;
 - the PASS / WARN / FAIL table from `report.md`;
 - what they must verify by hand (section "Verify manually" in `report.md`, plus anything you were
   unsure about).
