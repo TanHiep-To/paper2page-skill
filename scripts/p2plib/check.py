@@ -12,7 +12,7 @@ from bs4 import BeautifulSoup
 from rapidfuzz import fuzz
 
 from . import browser, content as content_mod, pdf_text
-from .common import Build
+from .common import Build, is_todo, prompt_instructions
 from .figures import MAX_BYTES
 from .pdf_text import PdfText
 from .render import cell_number, rank_cells
@@ -28,6 +28,7 @@ MANUAL = [
     "Results table: rows, columns, units against the paper, and the metric directions set in the yaml.",
     "Each figure and table image shows the right graphic for its caption, cropped cleanly (extracted/contact_sheet.png).",
     "Tagline and section summaries say only what the paper says.",
+    "If a prompt was used: section \"Instructions applied\" matches what you asked for, and no text from a skipped part is on the page.",
     "screenshots/template_vs_output.png: navbar, title area and footer look like the template's apart from the text.",
     "Venue and year in the BibTeX entry (taken from the yaml).",
     "If host_pdf is true: you have the right to host the PDF publicly.",
@@ -105,7 +106,7 @@ def abstract_on_page(soup: BeautifulSoup) -> str:
 
 def check_complete(content: dict, build: Build) -> Check:
     c = Check("Content complete")
-    todos = content_mod.find_todos(content)
+    todos = content_mod.todos(content)
     for path in todos:
         c.fail(f"TODO: {path}")
     if not todos:
@@ -315,8 +316,11 @@ def check_identity(content: dict, html: str, pdf: PdfText) -> Check:
     return c
 
 
-def check_abstract(html: str, pdf: PdfText) -> Check:
+def check_abstract(content: dict, html: str, pdf: PdfText) -> Check:
     c = Check("Abstract match")
+    if not content_mod.block(content, "abstract"):
+        c.note("the abstract is not shown (no abstract block in the layout)")
+        return c
     reference = pdf_text.extract_abstract(pdf)
     if not reference:
         c.warn("could not locate the abstract in the PDF text; compare manually")
@@ -343,16 +347,15 @@ def check_numbers(content: dict, html: str, pdf: PdfText) -> Check:
 
 def check_tables(content: dict, extracted: dict, pdf: PdfText) -> Check:
     c = Check("Table check")
-    if not content["tables"]:
-        c.note("no results table on the page" + (" (quantitative results are shown as figures)"
-               if content.get("quantitative_figures") else "; confirm the paper has none (see extracted.json)"))
-        if not content.get("quantitative_figures"):
-            c.status = "WARN"
+    shown = content_mod.shown_tables(content)
+    if not shown:
+        found = ", ".join(f"Table {t['number']}" for t in extracted["tables"]) or "none"
+        c.note(f"no table on the page (tables found in the PDF: {found})")
         return c
     source = {t["id"]: t for t in extracted["tables"]}
-    for t in content["tables"]:
-        tag = f"Table {t['number']}"
+    for t in shown:
         src = source.get(t["id"])
+        tag = f"Table {t.get('number') or (src or {}).get('number') or t['id']}"
         if not src:
             c.fail(f"{tag}: no such table was found in the PDF")
             continue
@@ -414,7 +417,9 @@ def check_figures(content: dict, extracted: dict, html: str) -> Check:
                 c.warn(f'{note["id"]}: caption differs from the printed caption (similarity {score:.0f}); check the meaning')
     if any(f.get("fallback") for f in used):
         c.warn("no figure captions were found in the PDF; the top half of page 1 is used")
-    if not used:
+    if not used and not content_mod.used_figures(content):
+        c.warn("the layout shows no figure")
+    elif not used:
         c.fail("no figure is shown on the page")
     if not c.details:
         c.note(f"{len(used)} figure(s) shown ({', '.join(f['id'] for f in used)}); captions match the printed captions")
@@ -423,6 +428,9 @@ def check_figures(content: dict, extracted: dict, html: str) -> Check:
 
 def check_bibtex(content: dict, html: str) -> Check:
     c = Check("BibTeX consistency")
+    if not content_mod.block(content, "bibtex"):
+        c.note("BibTeX is not shown (no bibtex block in the layout)")
+        return c
     pre = BeautifulSoup(html, "html.parser").select_one("#BibTeX pre")
     bib = pre.get_text() if pre else ""
     if not bib.strip().startswith("@"):
@@ -559,19 +567,153 @@ def check_browser(review: dict) -> Check:
     return c
 
 
+def check_layout(content: dict, extracted: dict) -> Check:
+    """The ordered block list of content.json: what is on the page, and in which order."""
+    c = Check("Layout")
+    errors, warnings = content_mod.validate(content, extracted)
+    for e in errors:
+        c.fail(e)
+    for w in warnings:
+        c.warn(w)
+    names = [f'section "{b.get("title")}"' if b.get("type") == "section" else str(b.get("type"))
+             for b in content.get("blocks", []) if isinstance(b, dict)]
+    c.note("page order: title area, " + ", ".join(names))
+    default = [b["type"] for b in content_mod.default_blocks("", [])]
+    kinds = [b.get("type") for b in content.get("blocks", []) if isinstance(b, dict)]
+    if [k for k in kinds if k != "section"] != [k for k in default if k != "section"]:
+        c.note("the order differs from the template's default (teaser, abstract, sections, bibtex)")
+    return c
+
+
+def _heading_at(title: str, text: str, start: int = 0) -> int:
+    """Position of a section heading in the PDF text: at a line start first, anywhere otherwise. -1 if absent."""
+    words = r"\s+".join(re.escape(w) for w in pdf_text.squash(title).split())
+    for pattern, flags in ((rf"^[ \t]*{words}", re.M), (rf"^[ \t]*{words}", re.M | re.I), (words, re.I)):
+        if m := re.compile(pattern, flags).search(text, start):
+            return m.start()
+    return -1
+
+
+def skipped_text(sections: list, pdf: PdfText) -> tuple[str, str, list[str]]:
+    """(text of the skipped sections, text of the rest of the PDF, problems).
+
+    An entry is a heading title, or {"title", "until": the next heading that is kept, "pages": [..]}.
+    Without "until" or "pages" a section runs to the end of the page its heading is on.
+    """
+    full = "\n".join(pdf.pages)
+    offsets = [0]
+    for p in pdf.pages:
+        offsets.append(offsets[-1] + len(p) + 1)
+    spans, problems = [], []
+    for entry in sections or []:
+        entry = {"title": entry} if isinstance(entry, str) else entry
+        title = str(entry.get("title") or "")
+        if entry.get("pages"):
+            spans += [(offsets[n - 1], offsets[n]) for n in entry["pages"] if 1 <= n <= len(pdf.pages)]
+            continue
+        start = _heading_at(title, full) if title else -1
+        if start < 0:
+            problems.append(f'skipped section "{title}": heading not found in the PDF text, so its numbers cannot be checked')
+            continue
+        end = _heading_at(str(entry["until"]), full, start + len(title)) if entry.get("until") else -1
+        if end < 0:
+            if entry.get("until"):
+                problems.append(f'skipped section "{title}": end heading "{entry["until"]}" not found; '
+                                "checked to the end of its page")
+            end = next(o for o in offsets if o > start)
+        spans.append((start, end))
+    inside, outside, pos = [], [], 0
+    for a, b in sorted(spans):
+        a = max(a, pos)
+        if b <= a:
+            continue
+        outside.append(full[pos:a])
+        inside.append(full[a:b])
+        pos = b
+    outside.append(full[pos:])
+    return "\n".join(inside), "\n".join(outside), problems
+
+
+def check_instructions(content: dict, extracted: dict, html: str, pdf: PdfText, build: Build) -> Check | None:
+    """Only when a prompt was used: every instruction is accounted for and skipped content is not on the page."""
+    if not content.get("_source", {}).get("prompt_sha1"):
+        return None
+    c = Check("Instructions")
+    applied = content.get("instructions_applied") or []
+    if not applied:
+        c.fail("a prompt was used but instructions_applied is empty in content.json")
+    for n, entry in enumerate(applied):
+        status = entry.get("status")
+        text = str(entry.get("instruction") or "")[:70]
+        if is_todo(status) or is_todo(entry.get("how")) or is_todo(entry.get("instruction")):
+            continue  # reported by "Content complete"
+        if status not in content_mod.STATUSES:
+            c.fail(f'instructions_applied[{n}]: status must be one of {", ".join(content_mod.STATUSES)} (got "{status}")')
+        elif not str(entry.get("how") or "").strip():
+            c.fail(f'instructions_applied[{n}]: "how" is empty')
+        elif status != "applied":
+            c.warn(f'{status}: "{text}": {entry["how"]}')
+    if build.prompt_used.is_file():
+        used = re.sub(r"<!--.*?-->", "", build.prompt_used.read_text(), flags=re.S)
+        have = pdf_text.loose_key(" ".join(str(e.get("instruction") or "") for e in applied))
+        for instruction in prompt_instructions(used):
+            if pdf_text.loose_key(instruction) not in have:
+                c.fail(f'instruction of the prompt is missing from instructions_applied: "{instruction[:70]}"')
+    excluded = content.get("excluded") or {}
+    for kind, shown in (("figures", content_mod.used_figures(content)), ("tables", content_mod.used_tables(content))):
+        for item in sorted(set(excluded.get(kind) or []) & set(shown)):
+            c.fail(f"{item} is listed in excluded.{kind} but is shown on the page")
+    files = {i["id"]: i.get("file") for i in extracted["figures"] + extracted["tables"]}
+    for item in (excluded.get("figures") or []) + (excluded.get("tables") or []):
+        if files.get(item) and f'static/images/{files[item]}' in html:
+            c.fail(f"{item} is excluded but its image is on the page")
+    inside, outside, problems = skipped_text(excluded.get("sections") or [], pdf)
+    for problem in problems:
+        c.warn(problem)
+    on_page = pdf_text.numbers_in(visible_text(BeautifulSoup(html, "html.parser"), body_only=True))
+    only_skipped = sorted((on_page & pdf_text.numbers_in(inside)) - pdf_text.numbers_in(outside), key=lambda n: (len(n), n))
+    if only_skipped:
+        c.warn("numbers on the page that the PDF prints only inside a skipped section (check that no text from "
+               f"a skipped part is on the page): {', '.join(only_skipped)}")
+    if c.status == "PASS":
+        titles = [e if isinstance(e, str) else e.get("title", "") for e in excluded.get("sections") or []]
+        c.note(f"{len(applied)} instruction(s) applied; excluded: {len(excluded.get('figures') or [])} figure(s), "
+               f"{len(excluded.get('tables') or [])} table(s), {len(titles)} section(s)"
+               + (f" ({', '.join(titles)})" if titles else "")
+               + "; no excluded figure or table and no number found only in a skipped section is on the page")
+    return c
+
+
+def _instruction_lines(content: dict, build: Build) -> list[str]:
+    cell = lambda s: str(s or "").replace("|", "/").replace("\n", " ")  # noqa: E731
+    source = f"`{build.prompt_used.name}`" if build.prompt_used.is_file() else "the prompt"
+    lines = [f"Prompt: {source} (copy of what was passed with --prompt).", "",
+             "| # | Instruction | Status | How it was applied, or why not |", "|---|---|---|---|"]
+    lines += [f"| {n} | {cell(e.get('instruction'))} | {cell(e.get('status'))} | {cell(e.get('how'))} |"
+              for n, e in enumerate(content.get("instructions_applied") or [], 1)]
+    excluded = content.get("excluded") or {}
+    titles = [e if isinstance(e, str) else e.get("title", "") for e in excluded.get("sections") or []]
+    lines += ["", "Left out of the page:",
+              f"- sections: {', '.join(titles) or 'none'}",
+              f"- figures: {', '.join(excluded.get('figures') or []) or 'none'}",
+              f"- tables: {', '.join(excluded.get('tables') or []) or 'none'}"]
+    return lines
+
+
 # ---------- report ----------
 
 def _extraction_lines(extracted: dict, content: dict) -> list[str]:
-    shown = {t["id"]: t.get("display", "image") for t in content["tables"]}
+    shown = {t["id"]: t.get("display", "image") for t in content_mod.shown_tables(content)}
     lines = []
     for f in extracted["figures"]:
         size = f"{f['width']}x{f['height']} px, {f['bytes'] // 1024} KB" if f.get("file") else "no image"
-        lines.append(f"- {f['id']} (page {f['page']}): {f['status']}; {f['method']}; {size}")
+        lines.append(f"- {f['id']} (page {f['page']}{', appendix' if f.get('appendix') else ''}): {f['status']}; "
+                     f"{f['method']}; {size}")
     for t in extracted["tables"]:
         grid = [r for r in t["grid"] if any(x.strip() for x in r)]
         html = "numbers verified against the text layer" if t["html_verified"] else "HTML version not verified, image only"
         use = f"shown as {shown[t['id']]}" if t["id"] in shown else "not shown"
-        lines.append(f"- {t['id']} (page {t['page']}): {t['status']}; {t['method']}; "
+        lines.append(f"- {t['id']} (page {t['page']}{', appendix' if t.get('appendix') else ''}): {t['status']}; {t['method']}; "
                      f"grid {len(grid)} x {len(grid[0]) if grid else 0}, {html}; {use}")
     return lines
 
@@ -588,12 +730,14 @@ def check_extraction(extracted: dict) -> Check:
     return c
 
 
-def render_report(name: str, checks: list[Check], extracted: dict, content: dict, shots: dict) -> str:
+def render_report(name: str, checks: list[Check], extracted: dict, content: dict, shots: dict, build: Build) -> str:
     worst = max((ch.status for ch in checks), key=ORDER.get, default="PASS")
     lines = [f"# Quality report: {name}", "", f"Overall: **{worst}**", "", "| Check | Result |", "|---|---|"]
     lines += [f"| {ch.name} | {ch.status} |" for ch in checks]
     for ch in checks:
         lines += ["", f"## {ch.name}: {ch.status}", ""] + [f"- {d}" for d in ch.details]
+    if content.get("_source", {}).get("prompt_sha1"):
+        lines += ["", "## Instructions applied", ""] + _instruction_lines(content, build)
     lines += ["", "## Extraction", ""] + _extraction_lines(extracted, content)
     if shots:
         lines += ["", "## Screenshots", ""] + [f"- {k}: `screenshots/{Path(v).name}`" for k, v in shots.items()]
@@ -610,7 +754,7 @@ def print_summary(checks: list[Check]) -> None:
 
 
 def run(build: Build, template_dir: Path, info: dict) -> list[Check]:
-    content = json.loads(build.content_json.read_text())
+    content = content_mod.load(build)
     extracted = json.loads(build.extracted_json.read_text())
     html = (build.site / "index.html").read_text()
     template_html = (template_dir / "index.html").read_text()
@@ -618,18 +762,20 @@ def run(build: Build, template_dir: Path, info: dict) -> list[Check]:
     print("  check: reviewing the page in headless Chromium ...")
     review = browser.review(build.site, template_dir, build.screenshots)
     checks = [
-        check_complete(content, build), check_extraction(extracted), check_skeleton(template_html, html, template_dir),
+        check_complete(content, build), check_extraction(extracted), check_layout(content, extracted),
+        check_instructions(content, extracted, html, pdf, build), check_skeleton(template_html, html, template_dir),
         check_fidelity(template_html, html, template_dir, build.site, review, info), check_typography(review),
-        check_sample_text(template_html, html), check_identity(content, html, pdf), check_abstract(html, pdf),
+        check_sample_text(template_html, html), check_identity(content, html, pdf), check_abstract(content, html, pdf),
         check_numbers(content, html, pdf), check_tables(content, extracted, pdf),
         check_figures(content, extracted, html), check_bibtex(content, html), check_page_quality(html),
         check_links(html, build.site), check_files(html, build.site, info), check_browser(review),
     ]
+    checks = [c for c in checks if c is not None]  # "Instructions" exists only when a prompt was used
     shots = review.get("shots", {})
-    build.report.write_text(render_report(content["name"], checks, extracted, content, shots))
+    build.report.write_text(render_report(content["name"], checks, extracted, content, shots, build))
     build.report_json.write_text(json.dumps({
         "name": content["name"], "title": content["title"],
         "status": max((c.status for c in checks), key=ORDER.get),
-        "todos": content_mod.find_todos(content), "checks": [asdict(c) for c in checks]}, indent=2))
+        "todos": content_mod.todos(content), "checks": [asdict(c) for c in checks]}, indent=2))
     print_summary(checks)
     return checks

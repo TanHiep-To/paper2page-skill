@@ -8,9 +8,11 @@ from pathlib import Path
 
 from . import check, content, extract, publish, site
 from .common import SKILL_DIR, STEPS, Build, P2PError, detect_owner, load_config, paper_folder, paper_settings, \
-    parse_link_flags, paper_yaml_path, save_crop_override, validate_name, write_paper_yaml
+    parse_link_flags, resolve_prompt, paper_yaml_path, save_crop_override, validate_name, write_paper_yaml
 
 TODO_HINT = "Ask Claude Code to fill the TODO fields in {path} from the paper, then run with --from render"
+PROMPT_HINT = ("A prompt was given: apply every instruction while filling {path} (blocks, excluded, "
+               "instructions_applied), then run with --from render")
 MINERU_NOTE = ("--engine mineru is documented but not bundled: it needs a separate, heavy install "
                "(see README.md, section \"Optional: MinerU engine\"). Use the default engine.")
 
@@ -29,6 +31,8 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--owner", help="GitHub account (default: config.yaml, then `gh api user`)")
     b.add_argument("--link", action="append", default=[], metavar="KIND=URL", help='link button; URL or "soon"')
     b.add_argument("--host-pdf", action="store_true", help="compress the PDF and publish it with the page")
+    b.add_argument("--prompt", metavar="FILE.md|TEXT", help="optional instructions for what to extract and how to lay "
+                   "out the page: a .md file (papers/<folder>/prompt.md) or inline text. Default: follow the template")
     b.add_argument("--from", dest="start", choices=STEPS, default="extract", help="first step to run")
     b.add_argument("--reset-content", action="store_true", help="rewrite content.json from the PDF (old one is backed up)")
     b.add_argument("--engine", choices=["pymupdf", "mineru"], default="pymupdf", help="extraction engine")
@@ -82,6 +86,7 @@ def cmd_build(args) -> int:
     if args.engine == "mineru":
         raise P2PError(MINERU_NOTE)
     config = load_config()
+    prompt = resolve_prompt(args.prompt)
     template_dir = _template_dir(args.template, config)
     links = parse_link_flags(args.link)
     settings, name, build = _open(args, links, args.host_pdf)
@@ -89,9 +94,12 @@ def cmd_build(args) -> int:
     page_url = f"https://{owner.lower()}.github.io/{name}/" if owner else ""
     home_url = page_url or "./"  # the home icon reloads this page
     start = STEPS.index(args.start)
+    if prompt and start > STEPS.index("content"):
+        print(f"--prompt is applied in the content step, so this run starts at --from content instead of --from {args.start}.")
+        start = STEPS.index("content")
     for step, needed in (("content", build.extracted_json), ("render", build.content_json), ("check", build.site / "index.html")):
         if start >= STEPS.index(step) and not needed.exists():
-            raise P2PError(f"Cannot start at --from {args.start}: {needed} does not exist yet. Run without --from first.")
+            raise P2PError(f"Cannot start at --from {STEPS[start]}: {needed} does not exist yet. Run without --from first.")
 
     print(f"Building {build.dir} from {args.paper}")
     if start <= 0:
@@ -100,7 +108,11 @@ def cmd_build(args) -> int:
             print(f"  created {created} with the detected values; edit it to add links, venue, year, metric directions")
             settings = paper_settings(args.paper, links, args.host_pdf)
     if start <= 1:
-        content.run(build, name, settings, reset=args.reset_content)
+        if prompt:
+            build.dir.mkdir(parents=True, exist_ok=True)
+            build.prompt_used.write_text(f"<!-- Copy of the --prompt used for this build ({prompt['source']}). Reference only: "
+                                         f"the result is in content.json. -->\n\n{prompt['text']}\n")
+        content.run(build, name, settings, reset=args.reset_content, prompt=prompt)
     info_path = build.dir / ".render.json"
     if start <= 2:
         info_path.write_text(json.dumps(site.run(build, args.paper, template_dir, settings, home_url, page_url)))
@@ -112,10 +124,14 @@ def cmd_build(args) -> int:
     print(f"  screenshots:   {build.screenshots}/desktop.png, mobile.png")
     print(f"  report:        {build.report}")
     print(f"  settings:      {paper_yaml_path(args.paper)}")
-    todos = content.find_todos(content.load(build))
+    if build.prompt_used.is_file():
+        print(f"  prompt used:   {build.prompt_used}")
+    todos = content.todos(content.load(build))
     if todos:
         print(f"\n{len(todos)} TODO field(s): {', '.join(todos)}")
         print(TODO_HINT.format(path=build.content_json))
+        if any(t.startswith("instructions_applied") for t in todos):
+            print(PROMPT_HINT.format(path=build.content_json))
     return 1 if any(c.status == "FAIL" for c in checks) else 0
 
 

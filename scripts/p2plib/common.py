@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import re
 import shutil
 import subprocess
@@ -38,6 +39,8 @@ class Build:
     @property
     def site(self) -> Path: return self.dir / "site"
     @property
+    def prompt_used(self) -> Path: return self.dir / "prompt_used.md"  # copy of --prompt, for reference only
+    @property
     def report(self) -> Path: return self.dir / "report.md"
     @property
     def report_json(self) -> Path: return self.dir / "report.json"
@@ -62,6 +65,46 @@ def paper_folder(pdf: Path) -> str:
         raise P2PError(f"{pdf} is not inside papers/<folder>/. Put the PDF in its own folder there, "
                        f"e.g. papers/MyPaper/{pdf.name}, and run again.")
     return parent.name
+
+
+def resolve_prompt(value: str | None) -> dict | None:
+    """--prompt: a .md file (convention: papers/<folder>/prompt.md) or inline instruction text.
+
+    Returns {"text", "source", "sha1"}, or None without --prompt. Any other file type is rejected.
+    """
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        raise P2PError("--prompt is empty. Give a .md file or the instruction text, or leave --prompt out.")
+    one_token = not re.search(r"\s", value)
+    if "\n" not in value and value.lower().endswith(".md"):
+        path = Path(value).expanduser()
+        if not path.is_file():
+            raise P2PError(f"Prompt file not found: {value}. Create it (one instruction per \"- \" bullet), "
+                           "or pass the instructions as inline text.")
+        text, source = path.read_text().strip(), str(path)
+        if not text:
+            raise P2PError(f"Prompt file is empty: {value}")
+    elif one_token and (Path(value).expanduser().is_file() or re.search(r"[\\/]|\.[A-Za-z0-9]{1,5}$", value)):
+        raise P2PError(f'--prompt takes a .md file or inline text, not "{value}". '
+                       "Save the instructions as papers/<folder>/prompt.md and pass that path.")
+    else:
+        text, source = value, "inline text"
+    return {"text": text, "source": source, "sha1": hashlib.sha1(text.encode()).hexdigest()}
+
+
+def prompt_instructions(text: str) -> list[str]:
+    """The instructions of a prompt: its "- " bullets (with their continuation lines), else its lines."""
+    bullets: list[str] = []
+    for line in text.splitlines():
+        if m := re.match(r"^\s*[-*]\s+(.*)$", line):
+            bullets.append(m.group(1).strip())
+        elif bullets and line.strip() and line[:1].isspace():
+            bullets[-1] += " " + line.strip()
+    if bullets:
+        return [b for b in bullets if b]
+    return [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.lstrip().startswith(("#", "<!--"))]
 
 
 def is_todo(value) -> bool:
