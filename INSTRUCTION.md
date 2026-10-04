@@ -9,6 +9,7 @@ For installation see [`README.md`](README.md).
 - [Per-paper settings](#per-paper-settings)
 - [Prompt: what to extract and how to lay out the page](#prompt-what-to-extract-and-how-to-lay-out-the-page)
 - [Appendix](#appendix)
+- [Checking that a prompt took effect](#checking-that-a-prompt-took-effect)
 - [Example: GenKOL](#example-genkol)
 - [Using the agent](#using-the-agent)
 - [Output folder](#output-folder)
@@ -182,6 +183,25 @@ How it works:
 - `report.md` gets a section **Instructions applied**: each instruction, whether it was applied,
   partly applied or not applied, and how or why.
 
+Example, `papers/DDPM/prompt.md` (main paper and appendix in one PDF,
+[arXiv 2006.11239](https://arxiv.org/abs/2006.11239)):
+
+```markdown
+- Only the overview of the proposed method.
+- Show the main quantitative results (FID/IS comparison).
+- Skip the ablations and the related work.
+- Add visualizations from the appendix: 2-3 sample figures.
+```
+
+Tips for a prompt that works:
+
+- One instruction per bullet, each about one thing.
+- Name sections by their heading in the paper ("skip Section 4.2", "skip the user study") and
+  figures or tables by their number when you care which one is used.
+- Say how much you want: "only an overview", "2-3 figures", "only Table 1".
+- Layout instructions are about blocks and order ("no teaser", "Results before Method", "add a
+  section Dataset"). The look of the page cannot be changed.
+
 ## Appendix
 
 A PDF that holds the main paper followed by its appendix is handled as one document.
@@ -190,12 +210,87 @@ A PDF that holds the main paper followed by its appendix is handled as one docum
   (ids `figA1`, `figS3`, `figB2`, `tableB2`).
 - IEEE-style captions are read too: `TABLE II` with the caption on the next line is `table2`.
 - The first appendix page is detected from the PDF outline or from the first appendix heading after
-  the references. Figures and tables from there on are marked `appendix` in `extracted.json` and
-  in the report, also when they continue the main numbering (Figure 5, 6, ...).
+  the references ("Appendix", "A ..."). Every figure and table in `extracted.json` is tagged
+  `"part": "main"` or `"part": "appendix"`, also when the appendix continues the main numbering
+  (Figure 9, 10, ...). The report's Extraction list shows the tag.
+- "From the appendix" in a prompt means figures tagged `appendix`. In the DDPM example the page
+  shows Figures 11, 13 and 16 (PDF pages 17, 19 and 22); the appendix starts on page 13.
+- If a prompt asks for appendix figures and the PDF has none, the instruction is reported as not
+  applied; nothing else is put in their place.
 - If the appendix restarts at `Figure 1`, that figure becomes `figApp1` and keeps its printed label.
 - Appendix figures are used like any other. Ask for them in the prompt: "use the qualitative figures
   from the appendix".
 - If your appendix is a separate file, merge it after the main paper into one PDF first.
+
+## Checking that a prompt took effect
+
+**In the report.** `build/<folder>/report.md` has the section "Instructions applied":
+
+```
+| # | Instruction | Status | How it was applied, or why not |
+| 1 | No teaser: start with the abstract. | applied | No teaser block; the page goes from the title area to the Abstract. |
+| 4 | Add visualizations from the appendix. | not applied | The PDF has no appendix. |
+
+Left out of the page:
+- sections: Ablation Study
+- tables: table2
+```
+
+and two checks: **Layout** (the page order, taken from `blocks`) and **Instructions** (FAIL when an
+excluded figure or table is on the page or an instruction has no answer; WARN for "partly" and
+"not applied", and for a number on the page that the PDF prints only inside a skipped section).
+
+**On the page.** Open `screenshots/desktop.png` and go down the instructions one by one: is the
+teaser gone, are the sections in the order you asked for, is the skipped table really absent.
+
+**With the case tests.** `tests/cases/<folder>.json` says, for one paper, which prompt it was built
+with and what the page must then contain:
+
+```json
+{
+  "folder": "VG_Cap",
+  "paper": "papers/VG_Cap/paper.pdf",
+  "prompt": ["No teaser: this paper has no teaser figure, so start with the abstract.", "..."],
+  "expect": {
+    "teaser": false,
+    "bibtex": true,
+    "sections": ["Abstract", "Method", "Quantitative Results", "Entity Selection Analysis", "Qualitative Comparison"],
+    "figures": ["fig1", "fig2", "fig4"],
+    "section_figures": {"Method": ["fig1"]},
+    "tables": ["table1"],
+    "not_on_page": ["table2", "fig3"],
+    "absent_text": ["ablation"],
+    "statuses": ["applied", "applied", "applied", "applied"]
+  }
+}
+```
+
+Run them from the folder that holds `papers/` and `build/`, after building the papers:
+
+```bash
+.venv/bin/python -m unittest tests.test_cases -v     # built pages against their prompts
+.venv/bin/python -m unittest discover tests          # these plus the unit tests
+```
+
+For every built case the tests check that:
+
+| Test | Checks |
+|---|---|
+| build has no FAIL and no TODO | the report, and that the build folder is the folder in `papers/` |
+| page order is the block order | section titles, teaser and BibTeX on the page match `blocks` and the expectation |
+| figures and tables on the page | exactly the expected ones, in order and in the expected section; none of `not_on_page` |
+| without a prompt the page is the default | default sections, no `prompt_used.md`, no "Instructions applied" |
+| prompt is recorded and answered | `prompt_used.md` and `instructions_applied` hold every instruction, with the expected status |
+| prompt changed the page | the layout is not the template's default |
+| skipped parts are not on the page | no excluded figure or table, none of the `absent_text` words, no number only from a skipped section |
+| overview only means a short section | at most the given number of paragraphs and one figure |
+| appendix figures come from the appendix | they are tagged `appendix` and lie after the appendix start page |
+
+A case whose `build/<folder>` does not exist is skipped. The shipped cases are GenKOL,
+Graphilosophy and CounterSketch (no prompt), VG_Cap, CogCanvas and CPAM (with a prompt), and DDPM
+(appendix figures; get the PDF with
+`curl -L -o papers/DDPM/paper.pdf https://arxiv.org/pdf/2006.11239`). To add your own paper, copy
+one of the files, set the prompt and what you expect, build the page, and run the tests.
 
 ## Example: GenKOL
 
@@ -279,7 +374,9 @@ build/GenKOL/
   site/            the page that is published
 ```
 
-Do not edit `site/index.html`: it is regenerated on every render.
+Do not edit `site/index.html`: it is regenerated on every render. Images above 500 KB are
+compressed for the page automatically. The arXiv stamp in the margin of page 1 is removed from the
+extracted text.
 
 ## Fixing a bad crop
 
@@ -343,6 +440,9 @@ old one.
 | `Repository ... has no .paper2page marker` | A repository with that name exists and was not made by this tool. Use another `--name`. |
 | Authors or title are wrong | Edit `title` / `authors` in `content.json`, then `--from render`. |
 | A table is shown as an image | Its numbers could not all be verified against the PDF text. |
+| An instruction of the prompt was not followed | Read "Instructions applied" in `report.md`; reword the instruction (name the section, figure or table) and run with `--prompt` again. |
+| `WARN: numbers ... only inside a skipped section` | A sentence on the page may come from a part you skipped. Check it, or ask the agent to remove it. |
+| Two tables side by side are cropped wrongly | Set each box with `recrop --table N` (see [Fixing a bad crop](#fixing-a-bad-crop)). |
 | No bold or underline in a table | Set `metric_directions` in the yaml. |
 | The page did not change online | GitHub Pages can take a minute; reload without cache. |
 | Start over for one paper | Delete `build/<folder>/` and build again. The yaml is kept. |

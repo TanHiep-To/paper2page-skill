@@ -101,7 +101,8 @@ This runs all four steps once. The extract step uses PyMuPDF only (no ML, fine o
   ("Figure A1", "Fig. S3", "Table B2" -> ids `figA1`, `figS3`, `tableB2`), and IEEE captions
   ("TABLE II" with the caption on the next line -> `table2`). A PDF that is main paper + appendix is
   one document: `appendix_start_page` in `extracted.json` is the first appendix page, and figures
-  and tables from there on have `"appendix": true`, also when they continue the main numbering.
+  and tables are tagged `"part": "main"` or `"part": "appendix"`, also when the appendix continues
+  the main numbering. The arXiv margin stamp is removed from all extracted text.
 - Finds each figure or table by its caption. Figures are taken above the caption, tables
   below it, each falling back to the other side. Works for single-column and full-width layouts and
   keeps sub-figures (a)(b)(c) together. Renders at 300 dpi and trims white margins.
@@ -228,8 +229,10 @@ entry per instruction into `instructions_applied`, with `status` and `how` set t
    skipped part. The check fails if one of them is on the page, and warns about numbers on the page
    that the PDF prints only inside a skipped section: for each such warning, find the sentence and
    remove or reword it unless the number really comes from a part that is kept.
-3. "Use figures from the appendix": pick from the items with `"appendix": true` in
-   `extracted.json`. If the PDF has no appendix, do not substitute silently: ask the user.
+3. "Use figures from the appendix": pick only from the items with `"part": "appendix"` in
+   `extracted.json`, also when the appendix continues the main numbering, and name each chosen
+   figure with its number and PDF page in `how`. If the PDF has no appendix, do not substitute
+   silently: mark the instruction "not applied", say why, and tell the user.
 4. Fill `instructions_applied`: for each instruction, `status` is `"applied"`, `"partly"` or
    `"not applied"`, and `how` says in one or two sentences what you did (blocks, figure and table
    ids, PDF pages) or why it could not be done. Keep the `instruction` text as written. An
@@ -274,7 +277,10 @@ overflows. Open `screenshots/template_vs_output.png` as well: the template's ori
 built page side by side; navbar, title area and footer must look the same apart from the text.
 Read `report.md`, in particular "Layout", "Template fidelity" and "Typography", and with a prompt
 "Instructions": go through `prompt_used.md` once more and confirm on the screenshots that each
-instruction is visibly followed and that nothing from a skipped part is on the page.
+instruction is visibly followed and that nothing from a skipped part is on the page. If the paper
+has a case file in `$SKILL/tests/cases/`, also run
+`"$SKILL/.venv/bin/python" -m unittest tests.test_cases` from the user's folder; it compares the
+built page with the prompt (layout, shown and skipped figures and tables, appendix figures).
 
 Fix problems at their source and run step 5 again: content problems in `content.json`, bad images
 with `recrop`, settings in the yaml. Repeat until `report.md` has no FAIL and the screenshots are
