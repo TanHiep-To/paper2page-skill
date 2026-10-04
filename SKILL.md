@@ -279,7 +279,7 @@ Read `report.md`, in particular "Layout", "Template fidelity" and "Typography", 
 "Instructions": go through `prompt_used.md` once more and confirm on the screenshots that each
 instruction is visibly followed and that nothing from a skipped part is on the page. If the paper
 has a case file in `$SKILL/tests/cases/`, also run
-`"$SKILL/.venv/bin/python" -m unittest tests.test_cases` from the user's folder; it compares the
+`"$SKILL/.venv/bin/python" "$SKILL/tests/test_cases.py"` from the user's folder; it compares the
 built page with the prompt (layout, shown and skipped figures and tables, appendix figures).
 
 Fix problems at their source and run step 5 again: content problems in `content.json`, bad images

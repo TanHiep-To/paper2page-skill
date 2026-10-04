@@ -272,6 +272,9 @@ Run them from the folder that holds `papers/` and `build/`, after building the p
 .venv/bin/python -m unittest discover tests          # these plus the unit tests
 ```
 
+If your `papers/` and `build/` are in another folder than the skill, run the file by its path from
+that folder: `~/.claude/skills/build-page/.venv/bin/python ~/.claude/skills/build-page/tests/test_cases.py -v`.
+
 For every built case the tests check that:
 
 | Test | Checks |
