@@ -39,14 +39,16 @@ def _caption(block: dict, m: re.Match, blocks: list[dict]) -> tuple[str, pymupdf
     """Caption text and area. A label that stands alone takes the lines (or the block) right below it."""
     rect = pymupdf.Rect(block["rect"])
     text = squash(block["text"][m.end():])
-    if text or m.re is CAPTION_RE:
+    if m.re is CAPTION_RE:
         return text, rect
-    below = [b for b in blocks if b is not block and 0 <= b["rect"].y0 - rect.y1 < 14
-             and b["rect"].x0 < rect.x1 and b["rect"].x1 > rect.x0]
-    if below:
-        nxt = min(below, key=lambda b: b["rect"].y0)
-        return squash(nxt["text"]), rect | nxt["rect"]
-    return "", rect
+    while not text.endswith("."):  # the caption may continue in the next block(s), set in capitals
+        below = [b for b in blocks if b is not block and -2 <= b["rect"].y0 - rect.y1 < 14
+                 and b["rect"].x0 < rect.x1 and b["rect"].x1 > rect.x0 and not rect.contains(b["rect"])]
+        nxt = min(below, key=lambda b: b["rect"].y0, default=None)
+        if nxt is None or (text and nxt["text"] != nxt["text"].upper()):
+            break
+        text, rect = squash(f"{text} {nxt['text']}"), rect | nxt["rect"]
+    return text, rect
 
 
 def _rules(page: pymupdf.Page) -> list[pymupdf.Rect]:
