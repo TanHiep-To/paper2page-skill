@@ -13,17 +13,45 @@ from . import figures, pdf_text, tables
 from .common import Build, P2PError
 
 MARKER_RE = re.compile(r"^[\d,\s*†‡§¶]+$")
-ENGINE = "pymupdf-caption-anchored"
+ENGINE = "pymupdf-caption-anchored-3"
+APPENDIX_HEAD = re.compile(r"^(appendix|appendices|supplementa(?:ry|l) materials?)\b", re.I)
+HEADING_LINE = re.compile(r"^[A-Z][A-Za-z]+(?:\s+[A-Za-z&-]+){0,7}$")
 
 
 def pdf_sha1(pdf: Path) -> str:
     return hashlib.sha1(pdf.read_bytes()).hexdigest()
 
 
-def read_header(pdf: Path) -> dict:
-    """Title, authors and affiliations from page 1 only (cheap; used to pick the project name)."""
-    with pymupdf.open(pdf) as doc:
-        return _header(doc[0])
+def _appendix_start(doc: pymupdf.Document, pages: list[str]) -> int | None:
+    """1-based first page of the appendix of a PDF that is main paper + appendix in one file: the first
+    appendix heading after the references (the PDF outline first, then the page text). None without one."""
+    numbered = [i for i, (_, title, _) in enumerate(doc.get_toc()) if re.match(r"^\d", title.strip())]
+    for i, (level, title, page) in enumerate(doc.get_toc()):
+        if numbered and i > numbered[-1] and level == 1 and re.match(r"^(Appendi|Supplementa|A[\s.:]+\S)", title.strip()):
+            return page
+    refs = [(i, j) for i, text in enumerate(pages) for j, ln in enumerate(text.splitlines())
+            if re.fullmatch(r"references|bibliography", ln.strip(), re.I)]
+    if not refs:
+        return None
+    ref_page, ref_line = refs[-1]
+    for i in range(ref_page, len(pages)):
+        lines = [ln.strip() for ln in pages[i].splitlines()]
+        for j in range(ref_line + 1 if i == ref_page else 0, len(lines)):
+            lone_a = lines[j] == "A" and j + 1 < len(lines) and HEADING_LINE.match(lines[j + 1])
+            if (APPENDIX_HEAD.match(lines[j]) and len(lines[j]) < 60) or lone_a:
+                return i + 1
+    return None
+
+
+def _mark_appendix(items: list[dict], start: int | None) -> int | None:
+    """Flag appendix figures and tables. Lettered labels ('A1', 'S3') are appendix items by themselves."""
+    lettered = [i for i in items if re.match(r"(fig|table)[A-Za-z]", i["id"])]
+    if start is None and lettered:
+        start = min(i["page"] for i in lettered if i.get("page")) if any(i.get("page") for i in lettered) else None
+    for i in items:
+        i["appendix"] = i in lettered or bool(start and i.get("page") and i["page"] >= start)
+        i["part"] = "appendix" if i["appendix"] else "main"
+    return start
 
 
 # ---------- title, authors, affiliations from page 1 ----------
@@ -40,6 +68,8 @@ def _header_blocks(page: pymupdf.Page) -> list[list[dict]]:
             if ln["spans"]:  # a line break is a word break
                 spans.append({"text": " ", "size": ln["spans"][-1]["size"], "flags": 0, "font": ""})
         text = "".join(s["text"] for s in spans).strip()
+        if not pdf_text.strip_arxiv_stamp(text).strip():
+            continue  # the arXiv margin stamp is not part of the header
         if re.match(r"^abstract\b", text, re.I):
             break
         if text:
@@ -179,14 +209,17 @@ def _bbox(rect: pymupdf.Rect) -> list[float]:
     return [round(v, 1) for v in rect]
 
 
-def _extract_figures(pdf: Path, doc: pymupdf.Document, build: Build, overrides: dict) -> list[dict]:
-    detected = {f["number"]: f for f in figures.detect_figures(doc)}
+def _extract_figures(pdf: Path, doc: pymupdf.Document, build: Build, overrides: dict,
+                     appendix_start: int | None) -> list[dict]:
+    detected = {f["key"]: f for f in figures.detect_figures(doc, appendix_start)}
     for key in overrides:  # an override can add a figure the detector missed
-        if m := re.fullmatch(r"fig(\d+)", key):
-            detected.setdefault(int(m.group(1)), {"number": int(m.group(1)), "caption": "", "rect": None})
+        if m := re.fullmatch(r"fig(\w+)", key):
+            detected.setdefault(m.group(1), {"key": m.group(1), "number": figures.label_number(m.group(1)),
+                                             "caption": "", "rect": None})
     out = []
-    for number in sorted(detected):
-        d, key = detected[number], f"fig{number}"
+    for suffix in sorted(detected, key=figures.label_order):
+        d, key = detected[suffix], f"fig{suffix}"
+        number = d["number"]
         entry = {"id": key, "number": number, "caption": d["caption"], "fallback": False}
         if key in overrides:
             page, rect = _override_rect(doc, key, overrides[key])
@@ -225,10 +258,16 @@ def _verified(grid: list[list[str]], page_text: str) -> bool:
     return bool(pdf_text.numbers_in(cells)) and pdf_text.numbers_in(cells) <= pdf_text.numbers_in(page_text)
 
 
-def _extract_tables(doc: pymupdf.Document, build: Build, overrides: dict, pages: list[str]) -> list[dict]:
+def _extract_tables(doc: pymupdf.Document, build: Build, overrides: dict, pages: list[str],
+                    appendix_start: int | None) -> list[dict]:
+    detected = {t["key"]: t for t in tables.detect_tables(doc, appendix_start)}
+    for key in overrides:  # an override can add a table the detector missed
+        if m := re.fullmatch(r"table(\w+)", key):
+            detected.setdefault(m.group(1), {"key": m.group(1), "label": m.group(1), "caption": "", "rect": None})
     out = []
-    for d in tables.detect_tables(doc):
-        key = f"table{d['label']}"
+    for suffix in sorted(detected, key=figures.label_order):
+        d = detected[suffix]
+        key = f"table{suffix}"
         entry = {"id": key, "number": d["label"], "caption": d["caption"]}
         if key in overrides:
             page, rect = _override_rect(doc, key, overrides[key])
@@ -324,16 +363,21 @@ def run(pdf_path: Path, build: Build, overrides: dict) -> dict:
     pdf = pdf_text.load(pdf_path)
     with pymupdf.open(pdf_path) as doc:
         header = _header(doc[0])
-        figs = _extract_figures(pdf_path, doc, build, overrides)
-        tabs = _extract_tables(doc, build, overrides, pdf.pages)
+        start = _appendix_start(doc, pdf.pages)
+        figs = _extract_figures(pdf_path, doc, build, overrides, start)
+        tabs = _extract_tables(doc, build, overrides, pdf.pages, start)
+    start = _mark_appendix(figs + tabs, start)
     for item in figs + tabs:
         item["caption"] = pdf_text.dehyphenate(item["caption"], pdf.full)
     data = {"pdf_sha1": sha, "pdf_name": pdf_path.name, "engine": ENGINE, "crop_overrides": overrides,
-            "n_pages": len(pdf.pages), **header, "abstract": pdf_text.extract_abstract(pdf) or "",
+            "n_pages": len(pdf.pages), "appendix_start_page": start, **header, "abstract": pdf_text.extract_abstract(pdf) or "",
             "keywords": [pdf_text.dehyphenate(k, pdf.full) for k in _keywords(pdf)], "figures": figs, "tables": tabs, "pages": pdf.pages}
     build.extracted_json.write_text(json.dumps(data, ensure_ascii=False, indent=2))
     _contact_sheet(build, figs + tabs)
     warns = [i["id"] for i in figs + tabs if i["status"].startswith("WARN")]
+    if start:
+        n_app = sum(1 for i in figs + tabs if i["appendix"])
+        print(f"  extract: appendix from page {start}, {n_app} appendix figure(s) / table(s)")
     print(f"  extract: {len(figs)} figure(s), {len(tabs)} table(s), {len(header['authors'])} author(s)"
           + (f"; WARN: {', '.join(warns)}" if warns else ""))
     return data

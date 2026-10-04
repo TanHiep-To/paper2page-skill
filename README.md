@@ -5,11 +5,18 @@ to GitHub Pages with one command.
 
 ```
 /build-page --paper papers/CounterSketch/CounterSketch.pdf --publish --pages
+/build-page --paper papers/CPAM/paper.pdf --prompt papers/CPAM/prompt.md
 ```
 
-Live examples:
+Live examples, default layout:
 [CounterSketch](https://tanhiep-to.github.io/CounterSketch/) ·
-[Graphilosophy](https://tanhiep-to.github.io/Graphilosophy/)
+[Graphilosophy](https://tanhiep-to.github.io/Graphilosophy/) ·
+[GenKOL](https://tanhiep-to.github.io/GenKOL/)
+
+Live examples, built with a prompt:
+[VG_Cap](https://tanhiep-to.github.io/VG_Cap/) (no teaser, own sections) ·
+[CogCanvas](https://tanhiep-to.github.io/CogCanvas/) (benchmark paper, figures from the appendix) ·
+[CPAM](https://tanhiep-to.github.io/CPAM/) (long journal paper, only the main results)
 
 ## What it is for
 
@@ -22,6 +29,7 @@ You have a paper and want a clean project page without writing HTML.
 | | Method, Quantitative Results and Qualitative Results sections |
 | | A page that follows the bundled [Nerfies](https://github.com/nerfies/nerfies.github.io) template exactly |
 | | A quality report (PASS / WARN / FAIL) with desktop and mobile screenshots |
+| `--prompt` (optional) | Your own selection and layout: skip sections, only the main results, no teaser, other section order and titles, figures from the appendix. The style stays the template's |
 | `--publish --pages` | A GitHub repository and a live page at `https://<owner>.github.io/<name>/` |
 
 Extraction and rendering are plain Python (PyMuPDF, no ML models, no paid API). The agent reads the
@@ -58,7 +66,8 @@ The installer links this folder into `~/.claude/skills/build-page` and
 
 ## Quick start
 
-1. Put the paper in `papers/`, one folder per paper (ignored by git, never pushed):
+1. Put the paper in `papers/`, one folder per paper (ignored by git, never pushed). The folder name
+   becomes the build folder `build/MyPaper/` and the default repository name:
 
    ```
    papers/MyPaper/MyPaper.pdf
@@ -70,7 +79,23 @@ The installer links this folder into `~/.claude/skills/build-page` and
    /build-page --paper papers/MyPaper/MyPaper.pdf
    ```
 
-3. Edit `papers/MyPaper/MyPaper.yaml` (links, venue, year), then publish:
+3. Optional: say what you want on the page. Write one instruction per `- ` bullet in
+   `papers/MyPaper/prompt.md` and build again with it, or pass a short instruction as text:
+
+   ```markdown
+   - Only the overview of the proposed method.
+   - Show the main results compared with the state of the art; skip the ablation study.
+   - Add 2-3 sample figures from the appendix.
+   ```
+
+   ```
+   /build-page --paper papers/MyPaper/MyPaper.pdf --prompt papers/MyPaper/prompt.md
+   /build-page --paper papers/MyPaper/MyPaper.pdf --prompt "No teaser: start with the abstract."
+   ```
+
+   `build/MyPaper/report.md` then lists each instruction under "Instructions applied".
+
+4. Edit `papers/MyPaper/MyPaper.yaml` (links, venue, year), then publish:
 
    ```
    /build-page --paper papers/MyPaper/MyPaper.pdf --publish --pages
@@ -82,8 +107,9 @@ In Codex, use `$build-page` with the same arguments.
 
 | File | Content |
 |---|---|
-| [`INSTRUCT.md`](INSTRUCT.md) | Commands, every argument, the per-paper yaml, and a full example |
+| [`INSTRUCTION.md`](INSTRUCTION.md) | Commands, every argument, the per-paper yaml, `--prompt` with examples, appendix support, and how to check that a prompt took effect |
 | [`SKILL.md`](SKILL.md) | The workflow the agent follows |
+| [`tests/`](tests) | Unit tests, and case tests that compare a built page with its prompt (`tests/cases/*.json`) |
 
 ## Update and uninstall
 

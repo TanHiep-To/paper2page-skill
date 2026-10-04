@@ -1,5 +1,8 @@
 """Step 3, render: content.json + template -> site/ (index.html, static/, paper.pdf, .nojekyll).
 
+The page follows content["blocks"] in order: teaser, abstract, any number of sections, bibtex. A block
+that is not listed is left out. Navbar, title area and footer are fixed.
+
 Clone-and-fill only. The template is the design system: every element on the page is a clone of a block
 found in the template's own index.html, with text, href, src and alt changed. Nothing here adds a
 style attribute, a <style> tag, a CSS rule, or a class that the template does not ship. Tables, for
@@ -16,12 +19,14 @@ from pathlib import Path
 import pymupdf
 from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 
-from . import render, template, typo
+from PIL import Image
+
+from . import content as content_mod, figures, render, template, typo
 from .common import SKILL_DIR, Build, P2PError, is_todo
 
 MAX_PDF_BYTES = 5 * 1024 * 1024
 MARKER = ".paper2page"
-TITLE_TAIL_MAX = 14  # characters that fit one line of the template's h1 on a 390 px phone
+TITLE_TAIL_MAX = 13  # characters that fit one line of the template's h1 on a 390 px phone ("KOL Generation", 14, does not)
 TAIL = {"paragraph": 26, "caption": 20, "tagline": 24, "heading": 8}
 
 
@@ -372,97 +377,90 @@ def _html_table(soup: BeautifulSoup, t: dict) -> Tag:
     return wrap
 
 
-def _content_sections(blocks: Blocks, content: dict, media: _Media) -> list[Tag]:
-    """Method, Quantitative Results, Qualitative Results: each one a clone of the Abstract section."""
-    out = []
+def _note(blocks: Blocks, paragraphs: list[str]) -> Tag:
+    """A further text block inside a section: a clone of the section's own text block."""
+    note = copy.copy(blocks.section.find(class_="content"))
+    note.clear()
+    for p in paragraphs:
+        note.append(blocks.new_paragraph(p))
+    return note
 
-    def section(title: str, paragraphs: list[str], extra: list[Tag]) -> None:
-        paragraphs = [p for p in paragraphs if _ok(p)]
-        if not paragraphs and not extra:
-            return
-        sec, column, text = blocks.new_section(title)
-        for p in paragraphs:
-            text.append(blocks.new_paragraph(p))
-        if not paragraphs:
-            text.decompose()
-        for tag in extra:
-            column.append(tag)
-        out.append(sec)
 
-    method = content["method"]
-    section("Method", method["paragraphs"], media.figure(method["figure"]))
-
-    quant = [q for q in content.get("quantitative_figures", []) if _ok(q.get("figure"))]
-    if content["tables"] or quant:
-        sec, column, text = blocks.new_section("Quantitative Results")
-        text.decompose()
-        for q in quant:
-            if _ok(q.get("description")):
-                note = copy.copy(blocks.section.find(class_="content"))
-                note.clear()
-                note.append(blocks.new_paragraph(q["description"]))
-                column.append(note)
-            for tag in media.figure(q["figure"]):
-                column.append(tag)
-        for t in content["tables"]:
-            for tag in media.table(t):
-                column.append(tag)
+def _section(blocks: Blocks, content: dict, media: _Media, block: dict) -> Tag | None:
+    """One content section, a clone of the Abstract section, filled with its items in order."""
+    sec, column, text = blocks.new_section(block.get("title", ""))
+    shown = 0
+    for item in block.get("items", []):
+        kind, tags = item.get("type"), []
+        if kind == "text":
+            paragraphs = [p for p in item.get("paragraphs", []) if _ok(p)]
+            if paragraphs and shown == 0:  # leading text goes into the section's own text block
+                for p in paragraphs:
+                    text.append(blocks.new_paragraph(p))
+                shown += 1
+            elif paragraphs:
+                tags = [_note(blocks, paragraphs)]
+        elif kind == "figure":
+            tags = media.figure(item.get("id", ""))
+        elif kind == "table" and _ok(item.get("id")):
+            t = content_mod.table_def(content, item["id"]) or {"id": item["id"], "display": "image"}
+            tags = media.table(t)
             if _ok(t.get("interpretation")):
-                note = copy.copy(blocks.section.find(class_="content"))
-                note.clear()
-                note.append(blocks.new_paragraph(t["interpretation"]))
-                column.append(note)
-        out.append(sec)
-
-    quals = [q for q in content["qualitative"] if _ok(q.get("figure")) or _ok(q.get("description"))]
-    if quals:
-        sec, column, text = blocks.new_section("Qualitative Results")
+                tags.append(_note(blocks, [t["interpretation"]]))
+        for tag in tags:
+            column.append(tag)
+        shown += len(tags)
+    if not shown:
+        return None
+    if not text.find("p"):
         text.decompose()
-        for q in quals:
-            if _ok(q.get("description")):
-                note = copy.copy(blocks.section.find(class_="content"))
-                note.clear()
-                note.append(blocks.new_paragraph(q["description"]))
-                column.append(note)
-            for tag in media.figure(q.get("figure", "")):
-                column.append(tag)
-        out.append(sec)
-    return out
+    return sec
+
+
+def _teaser(section: Tag, blocks: Blocks, media: _Media, block: dict) -> Tag:
+    """The template's own teaser block; its media element becomes the overview image."""
+    body = section.select_one(".hero-body")
+    caption = body.find("h2")
+    for old in body.find_all(["video", "img", "iframe"]):
+        old.decompose()
+    if _ok(block.get("figure")):
+        caption.insert_before(blocks.new_image(media.source(block["figure"]), media.alt(block["figure"])))
+        caption.insert_before("\n      ")
+    if _ok(block.get("tagline")):
+        caption.string = typo.polish(block["tagline"], TAIL["tagline"])
+    else:
+        caption.decompose()
+    return section
 
 
 def _body(soup: BeautifulSoup, blocks: Blocks, content: dict, media: _Media) -> None:
-    # Teaser: the template's own teaser block; its media element becomes the overview image.
-    teaser = soup.select_one("section.teaser .hero-body")
-    caption = teaser.find("h2")
-    for old in teaser.find_all(["video", "img", "iframe"]):
-        old.decompose()
-    if _ok(content["overview_figure"]):
-        caption.insert_before(blocks.new_image(media.source(content["overview_figure"]), media.alt(content["overview_figure"])))
-        caption.insert_before("\n      ")
-    if _ok(content["tagline"]):
-        caption.string = typo.polish(content["tagline"], TAIL["tagline"])
-    else:
-        caption.decompose()
-    for carousel in soup.select("section.hero.is-light"):
-        carousel.decompose()
-
-    # Abstract: the template's section, refilled; every other content section is a clone of it.
-    live = [s for s in soup.select("section.section") if s.get("id") != "BibTeX"]
-    abstract = next(s for s in live if any(h.get_text(strip=True) == "Abstract" for h in s.find_all("h2")))
-    sec, _, text = blocks.new_section("Abstract")
-    for p in content["abstract_paragraphs"]:
-        if _ok(p):
-            text.append(blocks.new_paragraph(p))
-    abstract.replace_with(sec)
-    for other in live:
-        if other is not abstract:
-            other.decompose()
-    anchor = sec
-    for new in _content_sections(blocks, content, media):
-        anchor.insert_after(new)
+    """Rebuild the page body from content["blocks"], in that order, below the title area."""
+    title_area = soup.select_one("h1.publication-title").find_parent("section")
+    teaser, bibtex = soup.select_one("section.teaser"), soup.select_one("#BibTeX")
+    for sec in [s for s in soup.find_all("section") if s is not title_area and not s.find_parent("section")]:
+        sec.extract()  # the template's sample sections; only the blocks listed below come back
+    nodes = []
+    for block in content["blocks"]:
+        kind = block.get("type")
+        if kind == "teaser":
+            nodes.append(_teaser(teaser, blocks, media, block))
+        elif kind == "abstract":  # the standard section; every other content section is a clone of it too
+            sec, _, text = blocks.new_section("Abstract")
+            for p in content["abstract_paragraphs"]:
+                if _ok(p):
+                    text.append(blocks.new_paragraph(p))
+            nodes.append(sec)
+        elif kind == "section":
+            if (sec := _section(blocks, content, media, block)) is not None:
+                nodes.append(sec)
+        elif kind == "bibtex":
+            bibtex.select_one("pre code").string = content["bibtex"]
+            nodes.append(bibtex)
+    anchor = title_area
+    for node in nodes:
+        anchor.insert_after(node)
         anchor.insert_after("\n\n\n")
-        anchor = new
-    soup.select_one("#BibTeX pre code").string = content["bibtex"]
+        anchor = node
 
 
 def build_html(template_html: str, content: dict, extracted: dict, links: dict[str, str],
@@ -471,7 +469,9 @@ def build_html(template_html: str, content: dict, extracted: dict, links: dict[s
     soup = BeautifulSoup(template_html, "html.parser")
     media = _Media(blocks, content, extracted)
     _body(soup, blocks, content, media)
-    overview = media.files.get(content["overview_figure"])
+    # og:image: the teaser image, else the first figure on the page, else the first table image
+    shown = [media.files[i] for i in media.used if i in media.files] + [media.tables[i] for i in media.used if i in media.tables]
+    overview = next((item for item in shown if item.get("file")), None)
     og_image = ""
     if overview and overview.get("file"):
         og_image = f"{page_url}static/images/{overview['file']}" if page_url else f"./static/images/{overview['file']}"
@@ -501,14 +501,35 @@ def compress_pdf(src: Path, dst: Path) -> tuple[int, str]:
     return size, how
 
 
+# ---------- images ----------
+
+def web_images(items: list[dict], source_dir: Path) -> dict[str, bytes]:
+    """Images above the size target, re-encoded for the page: {file name: bytes}. The entries of `items`
+    get the new width and height. Smaller images are not touched and are copied as they are."""
+    out = {}
+    for item in items:
+        path = source_dir / item["file"] if item.get("file") else None
+        if path is None or not path.is_file() or path.stat().st_size <= figures.MAX_BYTES:
+            continue
+        with Image.open(path) as img:
+            data, final = figures.encode_within(img.convert("RGB"), "jpg" if path.suffix.lower() in (".jpg", ".jpeg") else "png")
+        if len(data) < path.stat().st_size:
+            out[item["file"]] = data
+            item["width"], item["height"] = final.width, final.height
+    return out
+
+
 # ---------- step ----------
 
 def run(build: Build, pdf: Path, template_dir: Path, settings: dict, home_url: str, page_url: str) -> dict:
-    content = json.loads(build.content_json.read_text())
+    content = content_mod.load(build)
     extracted = json.loads(build.extracted_json.read_text())
     if is_todo(content["title"]) or is_todo(content["authors"]):
         raise P2PError(f"Title or authors could not be read from the PDF. Fill them in {build.content_json} first.")
+    if errors := content_mod.validate(content, extracted)[0]:
+        raise P2PError(f"{build.content_json}: the block list cannot be rendered:\n  - " + "\n  - ".join(errors))
     template_html = (template_dir / "index.html").read_text()
+    compressed = web_images(extracted["figures"] + extracted["tables"], build.extracted)
     html, used = build_html(template_html, content, extracted, settings["links"], settings["host_pdf"],
                             home_url, page_url)
 
@@ -517,7 +538,11 @@ def run(build: Build, pdf: Path, template_dir: Path, settings: dict, home_url: s
     images = build.site / "static" / "images"
     images.mkdir(parents=True, exist_ok=True)
     for item in extracted["figures"] + extracted["tables"]:
-        if item["id"] in used and item.get("file"):
+        if item["id"] in used and item.get("file") and item["file"] in compressed:
+            (images / item["file"]).write_bytes(compressed[item["file"]])
+            print(f"  render: {item['file']} compressed to {len(compressed[item['file']]) // 1024} KB "
+                  f"({item['width']}x{item['height']} px) for the page")
+        elif item["id"] in used and item.get("file"):
             shutil.copyfile(build.extracted / item["file"], images / item["file"])
     info = {"host_pdf": settings["host_pdf"], "used": used}
     if settings["host_pdf"]:

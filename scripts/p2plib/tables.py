@@ -7,12 +7,49 @@ from collections import Counter
 import pymupdf
 
 from .figures import CAPTION_RE as FIG_CAPTION_RE
-from .figures import column_range, text_blocks
+from .figures import column_range, label_key, label_order, text_blocks, unique_key
 from .pdf_text import clean, numbers_in, squash
 
-CAPTION_RE = re.compile(r"^\s*(?:Table|TABLE)\s+([A-Z]?\d+)\s*[:.|]")
+# "Table 3:", appendix labels ("Table B2."), Roman numerals ("Table II."), and the IEEE form where
+# "TABLE II" stands alone on its line with the caption below it.
+CAPTION_RE = re.compile(r"^\s*(?:Table|TABLE)\s+([A-Z]?\.?\d+|[IVXL]+)\s*[:.|]")
+LABEL_ONLY_RE = re.compile(r"^\s*TABLE\s+([IVXL]+|\d+)[ \t]*(?:\n|$)")
+ROMAN = {"I": 1, "V": 5, "X": 10, "L": 50}
 CELL_GAP = 7.0   # words closer than this (pt) belong to the same cell
 LINE_TOL = 3.0   # words within this vertical distance are on the same text line
+
+
+def caption_match(text: str) -> re.Match | None:
+    return CAPTION_RE.match(text) or LABEL_ONLY_RE.match(text)
+
+
+def roman_to_int(label: str) -> int:
+    total = 0
+    for ch, nxt in zip(label, label[1:] + " "):
+        total += -ROMAN[ch] if ROMAN.get(nxt, 0) > ROMAN[ch] else ROMAN[ch]
+    return total
+
+
+def table_key(label: str) -> str:
+    """Id suffix: 'II' -> '2', 'B.2' -> 'B2', '3' -> '3'."""
+    return str(roman_to_int(label)) if re.fullmatch(r"[IVXL]+", label) else label_key(label)
+
+
+def _caption(block: dict, m: re.Match, blocks: list[dict]) -> tuple[str, pymupdf.Rect]:
+    """Caption text and area. A label that stands alone takes the lines (or the block) right below it."""
+    rect = pymupdf.Rect(block["rect"])
+    text = squash(block["text"][m.end():])
+    if m.re is CAPTION_RE:
+        return text, rect
+    while not text.endswith("."):  # the caption may continue in the next block(s), set in capitals
+        below = [b for b in blocks if b is not block and -2 <= b["rect"].y0 - rect.y1 < 14
+                 and b["rect"].x0 < rect.x1 and b["rect"].x1 > rect.x0 and not rect.contains(b["rect"])]
+        nxt = min(below, key=lambda b: b["rect"].y0, default=None)
+        letters = [c for c in nxt["text"] if c.isalpha()] if nxt else []
+        if not letters or (text and sum(c.isupper() for c in letters) < 0.7 * len(letters)):
+            break  # body text, not a continuation of a caption set in capitals
+        text, rect = squash(f"{text} {nxt['text']}"), rect | nxt["rect"]
+    return text, rect
 
 
 def _rules(page: pymupdf.Page) -> list[pymupdf.Rect]:
@@ -110,20 +147,24 @@ def bold_numbers(page: pymupdf.Page, rect: pymupdf.Rect) -> list[str]:
     return sorted(found)
 
 
-def detect_tables(doc: pymupdf.Document) -> list[dict]:
-    """One entry per 'Table N' caption: label, page (1-based), caption, rect (or None), side."""
+def detect_tables(doc: pymupdf.Document, appendix_start: int | None = None) -> list[dict]:
+    """One entry per 'Table N' caption: key, label (as printed), page (1-based), caption, rect (or None), side."""
     found: dict[str, dict] = {}
     for page in doc:
         blocks = text_blocks(page)
         rules = None
         for b in blocks:
-            m = CAPTION_RE.match(b["text"])
-            if not m or m.group(1) in found:
+            m = caption_match(b["text"])
+            if not m:
+                continue
+            key = unique_key(table_key(m.group(1)), page.number + 1, found, appendix_start)
+            if key in found:
                 continue
             rules = _rules(page) if rules is None else rules
-            others = [o["rect"] for o in blocks
-                      if o is not b and (CAPTION_RE.match(o["text"]) or FIG_CAPTION_RE.match(o["text"]))]
-            rect, side = _table_rect(b["rect"], rules, *column_range(b["rect"], blocks), others)
-            found[m.group(1)] = {"label": m.group(1), "page": page.number + 1,
-                                 "caption": CAPTION_RE.sub("", squash(b["text"])).strip(), "rect": rect, "side": side}
-    return list(found.values())
+            caption, cap_rect = _caption(b, m, blocks)
+            others = [o["rect"] for o in blocks if o is not b and not cap_rect.contains(o["rect"])
+                      and (caption_match(o["text"]) or FIG_CAPTION_RE.match(o["text"]))]
+            rect, side = _table_rect(cap_rect, rules, *column_range(cap_rect, blocks), others)
+            found[key] = {"key": key, "label": m.group(1), "page": page.number + 1, "caption": caption,
+                          "rect": rect, "side": side}
+    return [found[k] for k in sorted(found, key=label_order)]

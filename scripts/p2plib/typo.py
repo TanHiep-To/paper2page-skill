@@ -5,7 +5,7 @@ import math
 import re
 
 NBSP = " "
-LABEL_RE = re.compile(r"\b(Table|Figure|Fig\.|Section|Sec\.|Eq\.|Equation|Algorithm|Appendix) (?=[A-Z]?\d)")
+LABEL_RE = re.compile(r"\b(Table|Figure|Fig\.|Section|Sec\.|Eq\.|Equation|Algorithm|Appendix) (?=[A-Z]?\.?\d|[IVXL]+\b)")
 NUMBER_UNIT_RE = re.compile(r"(?<![\w@/.-])(\d[\d,.]*%?|[A-Z]+\d+[A-Z\d]*) (?=[A-Za-z(])")
 TITLE_LINE_CHARS = 40  # characters that fit one line of the template's h1 at desktop width
 

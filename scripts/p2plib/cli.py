@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 from . import check, content, extract, publish, site
-from .common import SKILL_DIR, STEPS, Build, P2PError, detect_owner, derive_name, load_config, paper_settings, \
-    parse_link_flags, paper_yaml_path, save_crop_override, validate_name, write_paper_yaml
+from .common import SKILL_DIR, STEPS, Build, P2PError, detect_owner, load_config, paper_folder, paper_settings, \
+    parse_link_flags, resolve_prompt, paper_yaml_path, save_crop_override, validate_name, write_paper_yaml
 
 TODO_HINT = "Ask Claude Code to fill the TODO fields in {path} from the paper, then run with --from render"
+PROMPT_HINT = ("A prompt was given: apply every instruction while filling {path} (blocks, excluded, "
+               "instructions_applied), then run with --from render")
 MINERU_NOTE = ("--engine mineru is documented but not bundled: it needs a separate, heavy install "
                "(see README.md, section \"Optional: MinerU engine\"). Use the default engine.")
 
@@ -20,7 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     def paper_args(sp):
         sp.add_argument("--paper", required=True, type=Path, help="paper PDF")
-        sp.add_argument("--name", help="project name (default: from the yaml or the title)")
+        sp.add_argument("--name", help="repository name / page path (default: the yaml, then the folder in papers/)")
 
     b = sub.add_parser("build", help="extract -> content -> render -> check")
     paper_args(b)
@@ -28,6 +31,8 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--owner", help="GitHub account (default: config.yaml, then `gh api user`)")
     b.add_argument("--link", action="append", default=[], metavar="KIND=URL", help='link button; URL or "soon"')
     b.add_argument("--host-pdf", action="store_true", help="compress the PDF and publish it with the page")
+    b.add_argument("--prompt", metavar="FILE.md|TEXT", help="optional instructions for what to extract and how to lay "
+                   "out the page: a .md file (papers/<folder>/prompt.md) or inline text. Default: follow the template")
     b.add_argument("--from", dest="start", choices=STEPS, default="extract", help="first step to run")
     b.add_argument("--reset-content", action="store_true", help="rewrite content.json from the PDF (old one is backed up)")
     b.add_argument("--engine", choices=["pymupdf", "mineru"], default="pymupdf", help="extraction engine")
@@ -39,14 +44,14 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("recrop", help="set a manual crop for one figure or table and save it in the yaml")
     paper_args(r)
     target = r.add_mutually_exclusive_group(required=True)
-    target.add_argument("--fig", help="figure number, e.g. 5")
-    target.add_argument("--table", help="table number, e.g. 3 or C1")
+    target.add_argument("--fig", help="figure number, e.g. 5 or A1")
+    target.add_argument("--table", help="table number, e.g. 3 or C1 (TABLE II is 2)")
     r.add_argument("--page", type=int, help="page number, 1-based")
     r.add_argument("--bbox", help="x0,y0,x1,y1 in PDF points, origin top-left")
     r.add_argument("--reset", action="store_true", help="remove the manual crop and use automatic detection again")
 
-    u = sub.add_parser("publish", help="push build/<name>/site to github.com/<owner>/<name>")
-    u.add_argument("build_dir", type=Path, help="the build/<name> folder")
+    u = sub.add_parser("publish", help="push build/<folder>/site to github.com/<owner>/<name>")
+    u.add_argument("build_dir", type=Path, help="the build/<folder> folder")
     u.add_argument("--owner", help="GitHub account")
     u.add_argument("--name", help="repository name (default: the build's name)")
     u.add_argument("--private", action="store_true", help="create a private repository")
@@ -64,18 +69,24 @@ def _template_dir(flag: Path | None, config: dict) -> Path:
 
 
 def _open(args, link_flags: dict | None = None, host_pdf: bool = False) -> tuple[dict, str, Build]:
-    """Settings, project name and build folder for --paper (same resolution for every subcommand)."""
+    """Settings, repository name and build folder for --paper (same resolution for every subcommand).
+
+    The build folder is build/<folder> for papers/<folder>/<file>.pdf. --name and `name:` in the yaml
+    only change the repository name / page path.
+    """
     if not args.paper.is_file():
         raise P2PError(f"PDF not found: {args.paper}")
+    folder = paper_folder(args.paper)
     settings = paper_settings(args.paper, link_flags or {}, host_pdf)
-    name = validate_name(args.name or settings["name"] or derive_name(extract.read_header(args.paper)["title"], args.paper))
-    return settings, name, Build(Path("build") / name)
+    name = validate_name(args.name or settings["name"] or folder)
+    return settings, name, Build(Path("build") / folder)
 
 
 def cmd_build(args) -> int:
     if args.engine == "mineru":
         raise P2PError(MINERU_NOTE)
     config = load_config()
+    prompt = resolve_prompt(args.prompt)
     template_dir = _template_dir(args.template, config)
     links = parse_link_flags(args.link)
     settings, name, build = _open(args, links, args.host_pdf)
@@ -83,9 +94,12 @@ def cmd_build(args) -> int:
     page_url = f"https://{owner.lower()}.github.io/{name}/" if owner else ""
     home_url = page_url or "./"  # the home icon reloads this page
     start = STEPS.index(args.start)
+    if prompt and start > STEPS.index("content"):
+        print(f"--prompt is applied in the content step, so this run starts at --from content instead of --from {args.start}.")
+        start = STEPS.index("content")
     for step, needed in (("content", build.extracted_json), ("render", build.content_json), ("check", build.site / "index.html")):
         if start >= STEPS.index(step) and not needed.exists():
-            raise P2PError(f"Cannot start at --from {args.start}: {needed} does not exist yet. Run without --from first.")
+            raise P2PError(f"Cannot start at --from {STEPS[start]}: {needed} does not exist yet. Run without --from first.")
 
     print(f"Building {build.dir} from {args.paper}")
     if start <= 0:
@@ -94,7 +108,11 @@ def cmd_build(args) -> int:
             print(f"  created {created} with the detected values; edit it to add links, venue, year, metric directions")
             settings = paper_settings(args.paper, links, args.host_pdf)
     if start <= 1:
-        content.run(build, name, settings, reset=args.reset_content)
+        if prompt:
+            build.dir.mkdir(parents=True, exist_ok=True)
+            build.prompt_used.write_text(f"<!-- Copy of the --prompt used for this build ({prompt['source']}). Reference only: "
+                                         f"the result is in content.json. -->\n\n{prompt['text']}\n")
+        content.run(build, name, settings, reset=args.reset_content, prompt=prompt)
     info_path = build.dir / ".render.json"
     if start <= 2:
         info_path.write_text(json.dumps(site.run(build, args.paper, template_dir, settings, home_url, page_url)))
@@ -106,10 +124,14 @@ def cmd_build(args) -> int:
     print(f"  screenshots:   {build.screenshots}/desktop.png, mobile.png")
     print(f"  report:        {build.report}")
     print(f"  settings:      {paper_yaml_path(args.paper)}")
-    todos = content.find_todos(content.load(build))
+    if build.prompt_used.is_file():
+        print(f"  prompt used:   {build.prompt_used}")
+    todos = content.todos(content.load(build))
     if todos:
         print(f"\n{len(todos)} TODO field(s): {', '.join(todos)}")
         print(TODO_HINT.format(path=build.content_json))
+        if any(t.startswith("instructions_applied") for t in todos):
+            print(PROMPT_HINT.format(path=build.content_json))
     return 1 if any(c.status == "FAIL" for c in checks) else 0
 
 
@@ -121,7 +143,7 @@ def cmd_grid(args) -> int:
 
 def cmd_recrop(args) -> int:
     _, _, build = _open(args)
-    key = f"fig{args.fig}" if args.fig else f"table{args.table}"
+    key = ("fig" if args.fig else "table") + re.sub(r"[^A-Za-z0-9]", "", args.fig or args.table)
     if args.reset:
         path = save_crop_override(args.paper, key, None, None)
         print(f"Removed the manual crop of {key} from {path}.")

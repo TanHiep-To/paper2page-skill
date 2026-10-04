@@ -83,7 +83,8 @@ _TYPO_PROBE = """
       const widest = Math.max(...lines.map(l => l.right - l.left));
       const last = lines[lines.length - 1];
       out.push({kind, text: el.textContent.trim().replace(/\\s+/g, ' ').slice(0, 48), lines: lines.length,
-                lastWords: last.words, lastRatio: (last.right - last.left) / widest});
+                lastWords: last.words, lastRatio: (last.right - last.left) / widest,
+                endsWithUrl: /(https?:\/\/|www\.)\S+$/.test(el.textContent.trim())});
     }
   }
   return out;

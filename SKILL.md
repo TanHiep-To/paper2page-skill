@@ -1,7 +1,7 @@
 ---
 name: build-page
 description: Build a project page for a research paper from an HTML template (Nerfies style) with one command - extract figures and tables, fill the content, render, check, and optionally publish to its own GitHub repository with GitHub Pages.
-argument-hint: "--paper <pdf> [--template <dir>] [--name X] [--owner Y] [--link key=url|soon ...] [--host-pdf] [--publish] [--pages] [--private] [--from extract|content|render|check]"
+argument-hint: "--paper <pdf> [--prompt <file.md|text>] [--template <dir>] [--name X] [--owner Y] [--link key=url|soon ...] [--host-pdf] [--publish] [--pages] [--private] [--from extract|content|render|check]"
 disable-model-invocation: true
 ---
 
@@ -18,9 +18,13 @@ asked) publish. Scripts do everything deterministic; you review images and fill 
   is empty, use `~/.claude/skills/build-page` (Claude Code) or `~/.agents/skills/build-page` (Codex).
 - `P2P` = `"$SKILL/.venv/bin/python" "$SKILL/scripts/p2p.py"`.
 - Paths in the arguments are relative to the user's current folder. Do not `cd` elsewhere.
-- Outputs go to `./build/<name>/` in the user's current folder:
+- The paper must be in its own folder: `papers/<folder>/<file>.pdf`. Outputs go to `./build/<folder>/`
+  in the user's current folder, always named after that folder and never after the paper's title:
   `extracted/` (figN / tableN images, `extracted.json`, `contact_sheet.png`), `content.json`,
-  `report.md`, `screenshots/desktop.png`, `screenshots/mobile.png`, `site/` (the page to publish).
+  `prompt_used.md` (only with `--prompt`), `report.md`, `screenshots/desktop.png`,
+  `screenshots/mobile.png`, `site/` (the page to publish).
+- The repository name is `--name`, else `name:` in the yaml, else the folder name. It changes only
+  the repository and page path, never the build folder.
 - Per-paper settings: a yaml beside the PDF (`paper.yaml` for `paper.pdf`, otherwise
   `<pdf name>.yaml`), created by the first build. Precedence: command-line flags, then that yaml,
   then `$SKILL/config.yaml` (default `owner`, `template`).
@@ -35,8 +39,12 @@ footer) and changes their text, `href`, `src` and `alt`. Every content section i
 Abstract section, so all sections share one background and spacing. Tables, for which the template
 has no block, use Bulma classes already shipped in the template's CSS.
 
+The page is flexible in content and order, never in style: `content.json` holds an ordered list of
+`blocks` (teaser, abstract, any number of sections with any titles, bibtex) and the renderer follows
+it. Leaving a block out removes it from the page. Navbar, title area and footer are fixed.
+
 When you fix a problem you may change only:
-- `content.json` (text, which figure or table goes where, sections left empty to omit them);
+- `content.json` (text, the `blocks` list: which blocks, sections, figures and tables, in which order);
 - crops, with `recrop`;
 - the yaml settings.
 
@@ -70,21 +78,32 @@ needs judgement:
 ## 1. Parse the arguments and set up
 
 - `--paper <pdf>` is required and must be an existing file. If it is missing or invalid, ask the user.
-  Never guess a path or pick a PDF yourself.
+  Never guess a path or pick a PDF yourself. If the tool says the PDF is not inside
+  `papers/<folder>/`, stop and tell the user to move it there; do not move it yourself.
+- `--prompt <file.md | text>` is optional: instructions for what to take from the paper and how to
+  lay out the page. Pass the user's value through unchanged. A value ending in `.md` must be an
+  existing file; any other file type is rejected by the tool; anything else is inline text. Never
+  create a prompt file on your own. Without `--prompt`, build the template's default page.
 - `--template <dir>` is optional. Without it the tool uses `template:` from `$SKILL/config.yaml`, and
   if that is empty, the template bundled with the skill at `$SKILL/template`. If a given template
   folder has no `index.html`, ask the user.
-- Build flags: `--paper --template --name --owner --link --host-pdf --from`.
+- Build flags: `--paper --prompt --template --name --owner --link --host-pdf --from`.
   Publish flags, used only in step 8: `--publish --pages --private`.
 - First run only: if `$SKILL/.venv/bin/python` does not exist, run `"$SKILL/install.sh" --venv-only`.
 
 ## 2. Extract (script)
 
 ```
-P2P build --paper <pdf> [--template <dir>] [--name X] [--owner Y] [--link k=v ...] [--host-pdf]
+P2P build --paper <pdf> [--prompt <file.md|text>] [--template <dir>] [--name X] [--owner Y] [--link k=v ...] [--host-pdf]
 ```
 This runs all four steps once. The extract step uses PyMuPDF only (no ML, fine on a weak machine):
-- Finds "Figure N" / "Fig. N" / "Table N" captions. Figures are taken above the caption, tables
+- Finds "Figure N" / "Fig. N" / "Table N" captions, appendix captions with their own numbering
+  ("Figure A1", "Fig. S3", "Table B2" -> ids `figA1`, `figS3`, `tableB2`), and IEEE captions
+  ("TABLE II" with the caption on the next line -> `table2`). A PDF that is main paper + appendix is
+  one document: `appendix_start_page` in `extracted.json` is the first appendix page, and figures
+  and tables are tagged `"part": "main"` or `"part": "appendix"`, also when the appendix continues
+  the main numbering. The arXiv margin stamp is removed from all extracted text.
+- Finds each figure or table by its caption. Figures are taken above the caption, tables
   below it, each falling back to the other side. Works for single-column and full-width layouts and
   keeps sub-figures (a)(b)(c) together. Renders at 300 dpi and trims white margins.
 - If a figure is one embedded photo with more pixels than the render, the original image is kept
@@ -99,7 +118,7 @@ Exit code 2 is a usage or environment error: report it and stop.
 
 ## 3. Review the crops (you)
 
-Open `build/<name>/extracted/contact_sheet.png`, then open each crop file you are unsure about.
+Open `build/<folder>/extracted/contact_sheet.png`, then open each crop file you are unsure about.
 A crop is good when it contains the whole figure or table and nothing else: no "Fig. N" / "Table N"
 caption, no body text, nothing cut off. Panel labels and "(a) ... (b) ..." sub-captions printed
 inside a multi-panel figure belong to the figure.
@@ -122,10 +141,10 @@ it or do not use it.
 
 ## 4. Content (script, then you)
 
-The script has already written `build/<name>/content.json` with title, authors, affiliations,
-abstract, figures, captions, tables and BibTeX. Read the paper PDF itself (all of it, not just the
-abstract) and fill every field that says `TODO`. Note the PDF page of each fact; you report it in
-step 7.
+The script has already written `build/<folder>/content.json` with title, authors, affiliations,
+abstract, figures, captions, tables, BibTeX and the default `blocks`. Read the paper PDF itself (all
+of it, not just the abstract) and fill every field that says `TODO`. Note the PDF page of each fact;
+you report it in step 7.
 
 Rules:
 - Facts only from the paper. Never invent numbers, links, venues, dates or claims. Every number you
@@ -133,33 +152,101 @@ Rules:
 - Neutral academic tone. No marketing words unless quoted from the paper. Paragraphs of at most
   3 sentences. Plain text only: no HTML, Markdown or LaTeX.
 
-Fields:
-- `tagline`: exactly one sentence saying what the work is, containing its key number.
-- `overview_figure`: id of the figure that gives the best overview (default: the first figure).
-- `method.figure`: id of the main method or system figure; `""` if there is none or it is already
-  the overview figure. `method.paragraphs`: 1-3 short paragraphs on how the method works; `[]`
-  omits the section.
-- `tables`: the numeric results tables found in the PDF. Keep only the main results table(s) and
-  delete the others. For each one kept:
-  - `display`: `"html"` (re-typed table with computed highlighting; allowed only when the table's
-    `html_verified` is true in `extracted.json`) or `"image"` (the crop from the PDF). When
-    `"html"`, compare every cell with the PDF and fix any difference.
-  - `metrics_in`: `"columns"` if each value column is a metric and rows are methods; `"rows"` if
-    each row is a metric and the value columns are methods.
-  - `directions`: metric label -> `"higher"` or `"lower"`. Set one only when the paper makes the
-    direction clear (an arrow, bold best values, or a statement). Otherwise leave it out and tell
-    the user to set `metric_directions` in the yaml. Never mark best values yourself: bold and
-    underline are computed from the numbers.
-  - `interpretation`: 2-3 sentences on what the table shows, using only numbers from the table,
-    including any caveat the paper itself states.
-  - To show a table that is not in the list, add
-    `{"id": "table2", "number": "2", "caption": "...", "display": "image", "interpretation": "..."}`
-    with the id and caption from `extracted.json`.
-- `quantitative_figures`: optional entries `{figure, description}` for figures that report
-  quantitative results (charts, user studies); shown under Quantitative Results with the tables.
-  Use it when the paper's results are a figure rather than a table. Default `[]`.
-- `qualitative`: 1-3 entries `{figure, description}` for figures that show results or the system
-  in use; 1-2 sentences each. Do not reuse the overview or method figure. `[]` omits the section.
+### The page: `blocks`
+
+`blocks` is the ordered list the renderer follows:
+
+```json
+"blocks": [
+  {"type": "teaser", "figure": "fig1", "tagline": "One sentence."},
+  {"type": "abstract"},
+  {"type": "section", "title": "Method", "items": [
+      {"type": "text", "paragraphs": ["...", "..."]},
+      {"type": "figure", "id": "fig3"}]},
+  {"type": "section", "title": "Quantitative Results", "items": [
+      {"type": "table", "id": "table2"},
+      {"type": "text", "paragraphs": ["..."]},
+      {"type": "figure", "id": "fig7"}]},
+  {"type": "bibtex"}
+]
+```
+
+- Block types: `teaser`, `abstract`, `section`, `bibtex`. At most one teaser, abstract and bibtex;
+  any number of sections, in any order, with any titles. Remove a block to leave it off the page.
+- Item types inside a section: `text` (1-3 short paragraphs), `figure` (an id from `figures`),
+  `table` (an id from `extracted.json`). Items are shown in the order listed. A figure is shown with
+  its caption from `figures[]`.
+- Without `--prompt`, keep the default order the script wrote: teaser, Abstract, Method,
+  Quantitative Results (tables, and figures that report results), Qualitative Results, BibTeX.
+  Delete a default section only when the paper has nothing for it.
+- `teaser.tagline`: exactly one sentence saying what the work is, containing its key number.
+  `teaser.figure`: the figure that gives the best overview (default: the first figure).
+- Method: 1-3 short paragraphs on how the method works, and the main method or system figure unless
+  it is already the teaser.
+- Qualitative sections: figures that show results or the system in use, each with 1-2 sentences.
+  Do not show a figure twice.
+
+### Tables
+
+`tables` is the library of numeric tables found in the PDF; a table is on the page only when a
+`table` item in `blocks` refers to it. For each table you show:
+- `display`: `"html"` (re-typed table with computed highlighting; allowed only when the table's
+  `html_verified` is true in `extracted.json`) or `"image"` (the crop from the PDF). When
+  `"html"`, compare every cell and every column label with the PDF and fix any difference.
+- `metrics_in`: `"columns"` if each value column is a metric and rows are methods; `"rows"` if
+  each row is a metric and the value columns are methods.
+- `directions`: metric label -> `"higher"` or `"lower"`. Set one only when the paper makes the
+  direction clear (an arrow, bold best values, or a statement). Otherwise leave it out and tell
+  the user to set `metric_directions` in the yaml. Never mark best values yourself: bold and
+  underline are computed from the numbers.
+- `interpretation`: 2-3 sentences on what the table shows, using only numbers from the table,
+  including any caveat the paper itself states. It is shown below the table.
+- A table that is in `extracted.json` but not in `tables` is shown as its image: just refer to its
+  id. To give it a note, add `{"id": "table2", "number": "2", "caption": "...", "display": "image",
+  "interpretation": "..."}` to `tables`.
+
+### Applying `--prompt`
+
+When a prompt was given, the script saved a copy in `build/<folder>/prompt_used.md` and wrote one
+entry per instruction into `instructions_applied`, with `status` and `how` set to `TODO`. Read
+`prompt_used.md` first, then:
+
+1. Apply every instruction while filling `blocks`: which blocks exist, their order, the section
+   titles, which figures and tables are shown, and how detailed the text is ("only an overview of
+   the method" means 1-2 paragraphs and one figure; "a few main results" means the main comparison
+   table or tables, not every table).
+2. Whatever the prompt skips must not be on the page: no text, no number, no figure and no table
+   from it. Record it in `excluded`:
+   ```json
+   "excluded": {
+     "figures": ["fig8", "fig9"],
+     "tables": ["table3"],
+     "sections": [{"title": "Ablation Study", "until": "User Study"}]
+   }
+   ```
+   `title` is the heading as printed in the PDF; `until` is the next heading that is not skipped
+   (or use `"pages": [9, 10]` for whole pages). List every figure and table that belongs to a
+   skipped part. The check fails if one of them is on the page, and warns about numbers on the page
+   that the PDF prints only inside a skipped section: for each such warning, find the sentence and
+   remove or reword it unless the number really comes from a part that is kept.
+3. "Use figures from the appendix": pick only from the items with `"part": "appendix"` in
+   `extracted.json`, also when the appendix continues the main numbering, and name each chosen
+   figure with its number and PDF page in `how`. If the PDF has no appendix, do not substitute
+   silently: mark the instruction "not applied", say why, and tell the user.
+4. Fill `instructions_applied`: for each instruction, `status` is `"applied"`, `"partly"` or
+   `"not applied"`, and `how` says in one or two sentences what you did (blocks, figure and table
+   ids, PDF pages) or why it could not be done. Keep the `instruction` text as written. An
+   instruction that would need a new style, CSS or a block the template does not have is
+   `"not applied"`; say so, do not force it.
+5. If an instruction is unclear or contradicts another, ask the user instead of guessing.
+
+A later run with the same prompt keeps your work; a changed prompt resets `instructions_applied` to
+`TODO`, and you apply it again. `--prompt` with `--from render` or `--from check` starts at the
+content step, because the prompt is applied there. A run without `--prompt` uses `content.json` as
+it is.
+
+### Other fields
+
 - `figures[].caption`: the printed caption. You may shorten it, never change its meaning.
   `figures[].alt`: a short literal description of what the image shows.
 - Link buttons: Paper and Code are always shown; without a URL they read "(coming soon)". The home
@@ -169,6 +256,8 @@ Fields:
 - Do not edit `title`, `authors`, `affiliations`, `abstract_paragraphs` (verbatim from the PDF),
   `bibtex`, `venue`, `year`, `name`, `_source`. If the title or an author is wrong, tell the user.
   Display names, venue and year are changed in the yaml, not here.
+- A `content.json` written by an older version (with `method`, `qualitative`, ...) is converted to
+  `blocks` automatically and gives the same page.
 
 ## 5. Render (script)
 
@@ -176,7 +265,7 @@ Fields:
 P2P build --paper <pdf> [same flags] --from content
 ```
 Use `--from content` after recrops or yaml changes, `--from render` when only `content.json`
-changed. The page is built from the template and `content.json` into `build/<name>/site/`.
+changed. The page is built from the template and `content.json` into `build/<folder>/site/`.
 Never edit `site/index.html` by hand: it is regenerated on every render.
 
 ## 6. Check (script, then you)
@@ -186,7 +275,12 @@ The same command runs every quality check and takes the screenshots. Then look a
 figures are readable, the table fits (it may scroll sideways on mobile), nothing overlaps or
 overflows. Open `screenshots/template_vs_output.png` as well: the template's original page and the
 built page side by side; navbar, title area and footer must look the same apart from the text.
-Read `report.md`, in particular "Template fidelity" and "Typography".
+Read `report.md`, in particular "Layout", "Template fidelity" and "Typography", and with a prompt
+"Instructions": go through `prompt_used.md` once more and confirm on the screenshots that each
+instruction is visibly followed and that nothing from a skipped part is on the page. If the paper
+has a case file in `$SKILL/tests/cases/`, also run
+`"$SKILL/.venv/bin/python" "$SKILL/tests/test_cases.py"` from the user's folder; it compares the
+built page with the prompt (layout, shown and skipped figures and tables, appendix figures).
 
 Fix problems at their source and run step 5 again: content problems in `content.json`, bad images
 with `recrop`, settings in the yaml. Repeat until `report.md` has no FAIL and the screenshots are
@@ -200,8 +294,10 @@ Show the user:
   every WARN;
 - the crop fixes you made (figure or table, page, bbox, why);
 - each TODO field you filled, with the PDF page the facts came from;
+- with a prompt: the section "Instructions applied" of `report.md` (each instruction, its status and
+  how it was applied or why not), and what was left out;
 - both screenshots and `screenshots/template_vs_output.png`;
-- the "Template fidelity" and "Typography" results;
+- the "Layout", "Template fidelity" and "Typography" results;
 - the PASS / WARN / FAIL table from `report.md`;
 - what they must verify by hand (section "Verify manually" in `report.md`, plus anything you were
   unsure about).
@@ -217,7 +313,7 @@ b. Owner = `--owner`, else `owner` in `$SKILL/config.yaml`, else `gh api user --
    projects, publications, cv, people, course, thesis, demo, blog.
 c. Run:
    ```
-   P2P publish build/<name> [--owner Y] [--private] [--pages]
+   P2P publish build/<folder> [--owner Y] [--private] [--pages]
    ```
    Exit code 3 and a line starting with `CONFIRM:` mean the repository does not exist yet.
    Show the user owner, name and visibility and ASK them to confirm. Only after they say yes, run
