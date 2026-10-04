@@ -327,6 +327,21 @@ Stop here unless `--publish` was given.
 
 ## 8. Publish (only with `--publish`, and only if `report.md` has no FAIL and no TODO remains)
 
+**In Codex (sandboxed agents).** GitHub commands need the network and the macOS Keychain, and the
+sandbox blocks both. Run every one of them with escalated permissions, outside the sandbox, from
+the first attempt: `gh auth status`, `gh api user`, `P2P publish ...` (it calls `gh repo view`,
+`gh repo create`, `gh api` for Pages, `git fetch` and `git push`), and any `gh` or `git push`
+command you run yourself.
+- If `gh auth status` fails inside the sandbox ("The token in keyring is invalid", a network
+  error, a keychain error), do NOT conclude that the login is broken: run it again with escalated
+  permissions. Only if it also fails outside the sandbox, tell the user to run `gh auth login`.
+- The same holds for `P2P publish`: when its error says it looks like a sandbox restriction, run
+  the same command again with escalated permissions.
+- Never ask the user to run `p2p.py` themselves as a workaround. If the user denies the
+  escalation, stop and say that publishing needs it.
+
+In Claude Code nothing changes: run the commands as usual.
+
 a. Run `gh auth status`. If `gh` is missing or not logged in, tell the user to run `gh auth login`
    and stop.
 b. Owner = `--owner`, else `owner` in `$SKILL/config.yaml`, else `gh api user --jq .login`.
