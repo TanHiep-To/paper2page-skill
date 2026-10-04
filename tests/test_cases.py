@@ -134,7 +134,9 @@ class BuiltCases(unittest.TestCase):
     def test_prompt_changed_the_page(self):
         for c in self.each(only_prompt=True):
             with self.subTest(case=c.spec["folder"]):
-                layout = (c.expect["teaser"], c.expect["sections"])
+                has_image = c.page.select_one("section.teaser img") is not None
+                self.assertEqual(has_image, c.expect.get("teaser_image", c.expect["teaser"]))
+                layout = (has_image, c.expect["sections"])
                 self.assertNotEqual(layout, (True, DEFAULT_SECTIONS), "the page is still the template's default layout")
 
     def test_skipped_parts_are_not_on_the_page(self):

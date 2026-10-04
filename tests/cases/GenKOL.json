@@ -7,18 +7,18 @@
     "Show the main quantitative results (FID/IS comparison).",
     "Skip the ablations and the related work.",
     "Add visualizations from the appendix: 2-3 sample figures.",
-    "No Abstract"
+    "No teaser images"
   ],
   "expect": {
     "teaser": true,
     "bibtex": true,
     "sections": [
+      "Abstract",
       "Method",
       "Quantitative Results",
       "Qualitative Results"
     ],
     "figures": [
-      "fig1",
       "fig4",
       "fig9",
       "fig7",
@@ -33,13 +33,12 @@
       "table2"
     ],
     "not_on_page": [
+      "fig1",
       "fig2",
       "table1"
     ],
     "absent_text": [
-      "abstract",
-      "related work",
-      "Key Opinion Leader (KOL) play"
+      "related work"
     ],
     "max_method_paragraphs": {
       "Method": 3
@@ -51,6 +50,7 @@
       "not applied",
       "applied"
     ],
-    "note": "The paper has no FID/IS scores and no appendix: instruction 2 is partly applied (Table II and the user study instead) and instruction 4 is not applied."
+    "note": "The paper has no FID/IS scores and no appendix: instruction 2 is partly applied and instruction 4 is not applied. \"No teaser images\" keeps the tagline and drops the teaser image.",
+    "teaser_image": false
   }
 }
