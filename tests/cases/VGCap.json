@@ -4,14 +4,14 @@
   "prompt_source": "papers/VGCap/prompt.md",
   "prompt": [
     "Paper has no teaser image",
-    "Short abstract",
-    "Highlight the equation"
+    "Highlight the equation",
+    "Add venue MMM2027 (Cambodia)"
   ],
   "expect": {
     "teaser": false,
     "bibtex": true,
     "sections": [
-      "Summary",
+      "Abstract",
       "Method",
       "Quantitative Results",
       "Qualitative Results"
@@ -33,16 +33,13 @@
       "fig2",
       "fig3"
     ],
-    "absent_text": [
-      "abstract",
-      "News image captioning requires models"
-    ],
+    "absent_text": [],
     "statuses": [
       "applied",
       "partly",
-      "partly"
+      "applied"
     ],
-    "note": "The abstract is verbatim and cannot be shortened: it is replaced by a three-sentence Summary section. Equations (1) and (3) (notes figEq1, figEq3 with latex) are rendered with MathJax in Method; the template has no highlight style.",
+    "note": "Equations (1) and (3) (notes figEq1, figEq3 with latex) are rendered with MathJax in Method; the template has no highlight style. The venue comes from the yaml.",
     "equations": 2
   }
 }
