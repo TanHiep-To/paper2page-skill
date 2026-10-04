@@ -1,5 +1,5 @@
-"""Headless Chromium: screenshots, console errors, overflow, contrast, typography, and the
-computed-style comparison between the template's original page and the built page."""
+"""Headless Chromium: screenshots, console errors, overflow, contrast, typography, caption / equation /
+figure sizes, and the computed-style comparison between the template's original page and the built page."""
 from __future__ import annotations
 
 import functools
@@ -9,7 +9,10 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
+from . import render
+
 VIEWPORTS = {"desktop": (1280, 900), "mobile": (390, 844)}
+CAPTION_VIEWS = {"mobile": 390, "tablet-only": 800, "desktop": 1280}  # one width per range of Bulma's text helpers
 
 _PAGE_PROBE = """
 () => {
@@ -54,7 +57,7 @@ _TYPO_PROBE = """
 () => {
   const targets = [
     ['title', 'h1'], ['tagline', '.teaser h2'], ['heading', 'section.section h2.title'],
-    ['caption', 'section.section h2.subtitle'], ['paragraph', 'section.section p'],
+    ['caption', 'section.section __CAPTION__'], ['paragraph', '__BODY__'],
   ];
   const out = [];
   for (const [kind, selector] of targets) {
@@ -89,6 +92,52 @@ _TYPO_PROBE = """
   }
   return out;
 }
+""".replace("__CAPTION__", render.CAPTION_SELECTOR).replace("__BODY__", render.BODY_TEXT_SELECTOR)
+
+# Lines of every caption and the body font size, to choose each caption's alignment while rendering.
+_CAPTION_PROBE = """
+(a) => {
+  const px = v => parseFloat(v) || 0;
+  const body = document.querySelector(a.body) || document.body;
+  return {bodyPx: px(getComputedStyle(body).fontSize),
+          lines: [...document.querySelectorAll(a.caption)].map(el => {
+            const cs = getComputedStyle(el);
+            return Math.round(el.getBoundingClientRect().height / (px(cs.lineHeight) || 1.5 * px(cs.fontSize))); })};
+}
+"""
+
+# Captions (element and font size), equations (rendered height) and images (shown width against the
+# natural width and the width of the text column).
+_FORMAT_PROBE = """
+(a) => {
+  const px = v => parseFloat(v) || 0;
+  const body = document.querySelector(a.body) || document.body;
+  const bodyPx = px(getComputedStyle(body).fontSize);
+  const line = px(getComputedStyle(body).lineHeight) || 1.2 * bodyPx;
+  const label = new RegExp(a.label);
+  const seen = new Set(document.querySelectorAll(a.caption));
+  for (const el of document.querySelectorAll('section h1, section h2, section h3, section h4, section h5, section h6, section p, section figcaption')) {
+    if (!el.closest('.teaser') && label.test(el.textContent)) seen.add(el);
+  }
+  const captions = [...seen].map(el => { const h = el.closest('h1, h2, h3, h4, h5, h6');
+    return {text: el.textContent.trim().replace(/\\s+/g, ' ').slice(0, 48), tag: el.tagName.toLowerCase(),
+            heading: h ? h.tagName.toLowerCase() : '', fontPx: px(getComputedStyle(el).fontSize)}; });
+  const equations = [...document.querySelectorAll('mjx-container[display="true"]')].map(el => (
+    {kind: 'mathjax', height: el.getBoundingClientRect().height}));
+  const figures = [];
+  for (const img of document.querySelectorAll('section img')) {
+    const file = (img.getAttribute('src') || '').split('/').pop();
+    const col = img.closest('.container > .columns > .column') || img.closest('.container') || document.body;
+    const cs = getComputedStyle(col);
+    const rect = img.getBoundingClientRect();
+    if (a.equations.includes(file)) equations.push({kind: 'image', height: rect.height, file});
+    figures.push({file, width: rect.width, natural: img.naturalWidth,
+                  content: col.clientWidth - px(cs.paddingLeft) - px(cs.paddingRight)});
+  }
+  const unrendered = [...document.querySelectorAll('section .content')].filter(
+    el => el.textContent.includes('\\\\[') && !el.querySelector('mjx-container')).length;
+  return {bodyPx, line, captions, equations, unrendered, figures};
+}
 """
 
 # Computed styles that define the template's look.
@@ -104,7 +153,7 @@ _STYLE_PROBE = """
     'body': pick(document.body, ['fontFamily', 'fontSize', 'color', 'backgroundColor']),
     'h1': pick(document.querySelector('h1'), [...text, 'textAlign', 'marginBottom']),
     'section h2 (h2.title.is-3)': pick(document.querySelector('section.section h2.title.is-3'), [...text, 'textAlign', 'marginBottom']),
-    'paragraph (section .content p)': pick(document.querySelector('section.section .content p'), [...text, 'textAlign']),
+    'paragraph (section .content p)': pick(document.querySelector('__BODY__'), [...text, 'textAlign']),
     'teaser caption (.teaser h2.subtitle)': pick(document.querySelector('.teaser h2.subtitle'), text),
     'link (footer a)': pick(document.querySelector('footer .content p a[href]'), ['color', 'textDecorationLine']),
     'author line (.publication-authors)': pick(document.querySelector('.publication-authors'), text),
@@ -116,7 +165,7 @@ _STYLE_PROBE = """
     sections,
   };
 }
-"""
+""".replace("__BODY__", render.BODY_TEXT_SELECTOR)
 
 
 class _QuietHandler(http.server.SimpleHTTPRequestHandler):
@@ -131,7 +180,48 @@ def _serve(directory: Path) -> tuple[http.server.ThreadingHTTPServer, str]:
     return server, f"http://127.0.0.1:{server.server_address[1]}/index.html"
 
 
+def _settle(page) -> None:
+    """Wait for the web fonts and, on a page with equations, for MathJax: both change what is measured."""
+    from playwright.sync_api import Error as PlaywrightError
+    try:
+        page.evaluate("() => Promise.all([document.fonts.ready, window.MathJax && MathJax.startup "
+                      "? MathJax.startup.promise : null]).then(() => true)")
+    except PlaywrightError:
+        pass
+
+
+def caption_layout(site: Path, caption: str, body: str) -> dict:
+    """{"lines": {range: [lines of each caption]}, "body_px"}; {} without a browser."""
+    try:
+        from playwright.sync_api import Error as PlaywrightError
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return {}
+    server, url = _serve(site)
+    out: dict = {"lines": {}}
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch()
+            for name, width in CAPTION_VIEWS.items():
+                page = browser.new_page(viewport={"width": width, "height": 900})
+                try:
+                    page.goto(url, wait_until="load", timeout=30000)
+                except PlaywrightError:
+                    pass
+                _settle(page)
+                got = page.evaluate(_CAPTION_PROBE, {"caption": caption, "body": body})
+                out["lines"][name], out["body_px"] = got["lines"], got["bodyPx"]
+                page.close()
+            browser.close()
+    except PlaywrightError:
+        return {}
+    finally:
+        server.shutdown()
+    return out
+
+
 def _visit(browser, url: str, name: str, size: tuple[int, int], shot: Path, log: dict, probes: dict) -> dict:
+    """`probes`: name -> JavaScript function, or (function, its argument)."""
     from playwright.sync_api import Error as PlaywrightError
     page = browser.new_page(viewport={"width": size[0], "height": size[1]})
     path = lambda u: "/" + u.split("/", 3)[-1]  # noqa: E731
@@ -148,7 +238,8 @@ def _visit(browser, url: str, name: str, size: tuple[int, int], shot: Path, log:
         page.wait_for_load_state("networkidle", timeout=10000)
     except PlaywrightError:
         pass
-    result = {key: page.evaluate(js) for key, js in probes.items()}
+    _settle(page)
+    result = {key: page.evaluate(*js) if isinstance(js, tuple) else page.evaluate(js) for key, js in probes.items()}
     page.screenshot(path=str(shot), full_page=True)
     page.close()
     return result
@@ -172,8 +263,10 @@ def _side_by_side(template_shot: Path, output_shot: Path, out: Path) -> None:
         sheet.save(out, optimize=True)
 
 
-def review(site: Path, template_dir: Path, shots_dir: Path) -> dict:
-    """Open the built page at each viewport and the template's original page at desktop width."""
+def review(site: Path, template_dir: Path, shots_dir: Path, equation_files: list[str] | None = None) -> dict:
+    """Open the built page at each viewport and the template's original page at desktop width.
+
+    `equation_files`: the images that are equations (the fallback when an equation has no LaTeX)."""
     try:
         from playwright.sync_api import Error as PlaywrightError
         from playwright.sync_api import sync_playwright
@@ -183,17 +276,20 @@ def review(site: Path, template_dir: Path, shots_dir: Path) -> dict:
     site_server, site_url = _serve(site)
     tpl_server, tpl_url = _serve(template_dir)
     result: dict = {"shots": {}, "console": [], "failed": [], "views": {}, "typography": {}, "styles": {},
-                    "baseline": {"console": [], "failed": []}}
+                    "format": {}, "baseline": {"console": [], "failed": []}}
+    fmt = {"caption": render.CAPTION_SELECTOR, "body": render.BODY_TEXT_SELECTOR, "label": render.CAPTION_LABEL,
+           "equations": equation_files or []}
     try:
         with sync_playwright() as pw:
             browser = pw.chromium.launch()
             for name, size in VIEWPORTS.items():
                 shot = shots_dir / f"{name}.png"
-                probes = {"view": _PAGE_PROBE, "typo": _TYPO_PROBE}
+                probes = {"view": _PAGE_PROBE, "typo": _TYPO_PROBE, "format": (_FORMAT_PROBE, fmt)}
                 if name == "desktop":
                     probes["styles"] = _STYLE_PROBE
                 got = _visit(browser, site_url, name, size, shot, result, probes)
                 result["views"][name], result["typography"][name] = got["view"], got["typo"]
+                result["format"][name] = got["format"]
                 result["shots"][name] = shot
                 if name == "desktop":
                     result["styles"]["output"] = got["styles"]

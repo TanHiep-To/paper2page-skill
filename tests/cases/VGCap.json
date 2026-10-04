@@ -18,15 +18,11 @@
     ],
     "figures": [
       "fig1",
-      "figEq1",
-      "figEq3",
       "fig4"
     ],
     "section_figures": {
       "Method": [
-        "fig1",
-        "figEq1",
-        "figEq3"
+        "fig1"
       ]
     },
     "tables": [
@@ -46,6 +42,7 @@
       "partly",
       "partly"
     ],
-    "note": "The abstract is verbatim and cannot be shortened: it is replaced by a three-sentence Summary section. Equations (1) and (3) are manual crops (figEq1, figEq3) shown in Method; the template has no highlight style."
+    "note": "The abstract is verbatim and cannot be shortened: it is replaced by a three-sentence Summary section. Equations (1) and (3) (notes figEq1, figEq3 with latex) are rendered with MathJax in Method; the template has no highlight style.",
+    "equations": 2
   }
 }

@@ -103,6 +103,9 @@ class BuiltCases(unittest.TestCase):
                     self.assertEqual([i for i in c.media(c.section(title)) if i.startswith("fig")], figures)
                 for item in c.expect["not_on_page"]:
                     self.assertNotIn(item, shown)
+                if "equations" in c.expect:  # rendered by MathJax from the note's latex, not as an image
+                    self.assertEqual(c.page.get_text().count("\\["), c.expect["equations"])
+                    self.assertTrue(c.page.select_one('head script[src*="mathjax"]'))
 
     # ---- cases without a prompt: the template's default page ----
 

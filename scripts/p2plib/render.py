@@ -9,6 +9,14 @@ CELL_NUM_RE = re.compile(r"-?\d+(?:,\d{3})*(?:\.\d+)?")
 # Bulma classes that ship with the template; nothing here is defined by this tool.
 TABLE_CLASSES = ["table", "is-fullwidth", "is-hoverable"]
 TABLE_WRAPPER_CLASS = "table-container"
+# Captions are paragraphs, never headings: one size below the body text (Bulma's is-size-6 equals it).
+CAPTION_CLASSES = ["is-size-7", "has-text-grey-dark"]
+CAPTION_SELECTOR = "p." + ".".join(CAPTION_CLASSES)
+BODY_TEXT_SELECTOR = "section.section .content p:not(.is-size-7)"
+CAPTION_LABEL = r"^\s*(Figure|Fig\.|Table|Equation|Eq\.)\s*\(?[A-Z]?\.?\d+\)?\s*[.:]"
+CAPTION_GAP = {"below": "mt-2", "above": "mb-2"}  # between a caption and its image, table or equation
+NARROW_ROW, NARROW_COLUMN = ["columns"], ["column", "is-8", "is-offset-2"]  # a single-column figure
+MATHJAX_SRC = "https://cdn.jsdelivr.net/npm/mathjax@3.2.2/es5/tex-svg.js"
 LINK_KINDS = {  # kind -> (label, Font Awesome / Academicons icon class shipped with the template)
     "paper": ("Paper", "fas fa-file-pdf"),
     "arxiv": ("arXiv", "ai ai-arxiv"),

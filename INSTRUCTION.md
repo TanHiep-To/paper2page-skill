@@ -10,6 +10,7 @@ For installation see [`README.md`](README.md).
 - [Prompt: what to extract and how to lay out the page](#prompt-what-to-extract-and-how-to-lay-out-the-page)
 - [Appendix](#appendix)
 - [Checking that a prompt took effect](#checking-that-a-prompt-took-effect)
+- [Captions, equations and figure sizes](#captions-equations-and-figure-sizes)
 - [Example: GenKOL](#example-genkol)
 - [Using the agent](#using-the-agent)
 - [Output folder](#output-folder)
@@ -294,6 +295,34 @@ Graphilosophy and CounterSketch (no prompt), VG_Cap, CogCanvas and CPAM (with a 
 (appendix figures; get the PDF with
 `curl -L -o papers/DDPM/paper.pdf https://arxiv.org/pdf/2006.11239`). To add your own paper, copy
 one of the files, set the prompt and what you expect, build the page, and run the tests.
+
+## Captions, equations and figure sizes
+
+The renderer formats these the same way on every page; nothing has to be set.
+
+- **Captions** are paragraphs, never headings: only section titles are headings, and the teaser
+  caption is the one element that uses the template's subtitle style. A caption is one size below the
+  body text (Bulma `is-size-7 has-text-grey-dark`; `is-size-6` is the size of the body text itself),
+  with the label (`Figure N.`, `Table N.`, `Equation (N):`) in bold. Figure captions are below the
+  image, table captions above the table. A caption that fits one line is centred, a longer one is
+  justified; this is measured in the browser at phone, tablet and desktop width.
+- **Equations** are rendered with MathJax when the figure note in `content.json` has a `latex` field
+  (the agent transcribes it from the PDF and compares every symbol with the PDF text). The page then
+  loads one MathJax script from a CDN, the only addition to the template; the equation is centred
+  and has the size of the body text. Without `latex` the crop from the PDF is shown, scaled from its
+  size in PDF points by the ratio of the page's body font size to the PDF's.
+- **Figure sizes.** A figure or table image that spans the text width in the PDF uses the full
+  content width. One that is narrower than 85% of the text width (one column of a two-column paper,
+  or a small figure) is placed in a narrower column (`column is-8 is-offset-2`) on tablet and
+  desktop. No image is shown above its natural size.
+
+Three checks in `report.md` cover this; a FAIL blocks publishing:
+
+| Check | FAIL when |
+|---|---|
+| Captions | a caption is inside a heading element (`h1`-`h6`), or its computed font size is larger than the body text |
+| Equations | a rendered equation is taller than 3 x the body line height, or MathJax did not run |
+| Figure sizes | a single-column figure is wider than 70% of the content width on desktop, or an image is shown above its natural size |
 
 ## Example: GenKOL
 
