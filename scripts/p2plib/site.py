@@ -26,7 +26,7 @@ from .common import SKILL_DIR, Build, P2PError, is_todo
 
 MAX_PDF_BYTES = 5 * 1024 * 1024
 MARKER = ".paper2page"
-TITLE_TAIL_MAX = 14  # characters that fit one line of the template's h1 on a 390 px phone
+TITLE_TAIL_MAX = 13  # characters that fit one line of the template's h1 on a 390 px phone ("KOL Generation", 14, does not)
 TAIL = {"paragraph": 26, "caption": 20, "tagline": 24, "heading": 8}
 
 
