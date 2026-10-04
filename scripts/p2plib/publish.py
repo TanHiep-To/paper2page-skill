@@ -14,11 +14,52 @@ from .site import MARKER
 CONFIRM_NEEDED = 3  # exit code: the repo does not exist yet and --yes was not given
 
 
-def _run(cmd: list[str], cwd: Path, check: bool = True) -> subprocess.CompletedProcess:
+# What gh and git print when an agent sandbox (Codex's seatbelt) blocks the network or the macOS Keychain.
+# gh then cannot read or verify its token, so it reports the token as invalid although the login is fine.
+SANDBOX_SIGNS = (
+    "could not resolve host", "no such host", "dial tcp", "network is unreachable", "error connecting to",
+    "failed to connect", "connection refused", "operation not permitted", "check your internet connection",
+    "keychain", "keyring", "errsecinteractionnotallowed", "user interaction is not allowed",
+    "could not read username", "credential", "token is invalid", "token invalid", "invalid token",
+)
+NOT_LOGGED_IN_SIGNS = ("not logged in", "no github hosts", "gh auth login")
+SANDBOX_HINT = ("This looks like a sandbox restriction (no network, or no access to the macOS Keychain), not a broken "
+                "login. Run the same command again with escalated permissions, outside the sandbox (in Codex: approve "
+                "the escalation prompt). Only if it also fails there, run `gh auth login`.")
+
+
+def classify(returncode: int, output: str) -> str:
+    """'ok', 'sandbox' (blocked network or keychain, or a token reported invalid), 'auth' (not logged in), 'other'."""
+    if returncode == 0:
+        return "ok"
+    text = output.lower()
+    if any(sign in text for sign in SANDBOX_SIGNS):
+        return "sandbox"
+    if any(sign in text for sign in NOT_LOGGED_IN_SIGNS):
+        return "auth"
+    return "other"
+
+
+def failure(cmd: list[str], r: subprocess.CompletedProcess) -> str:
+    """The error text for a failed command, with the sandbox hint when the output looks like one."""
+    output = ((r.stderr or "") + (r.stdout or "")).strip()
+    hint = f"\n{SANDBOX_HINT}" if classify(r.returncode, output) == "sandbox" else ""
+    return f"`{' '.join(cmd)}` failed:\n{output}{hint}"
+
+
+def _run(cmd: list[str], cwd: Path | None, check: bool = True) -> subprocess.CompletedProcess:
     r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     if check and r.returncode != 0:
-        raise P2PError(f"`{' '.join(cmd)}` failed:\n{(r.stderr or r.stdout).strip()}")
+        raise P2PError(failure(cmd, r))
     return r
+
+
+def _answers(cmd: list[str], cwd: Path) -> bool:
+    """A yes/no question to GitHub. A blocked network or keychain is an error, never a "no"."""
+    r = _run(cmd, cwd, check=False)
+    if classify(r.returncode, (r.stderr or "") + (r.stdout or "")) == "sandbox":
+        raise P2PError(failure(cmd, r))
+    return r.returncode == 0
 
 
 def check_gh() -> None:
@@ -26,7 +67,12 @@ def check_gh() -> None:
         raise P2PError("git is not installed.")
     if not shutil.which("gh"):
         raise P2PError("GitHub CLI (gh) is not installed. Install it from https://cli.github.com and run `gh auth login`.")
-    if subprocess.run(["gh", "auth", "status"], capture_output=True).returncode != 0:
+    cmd = ["gh", "auth", "status"]
+    r = _run(cmd, None, check=False)
+    kind = classify(r.returncode, (r.stderr or "") + (r.stdout or ""))
+    if kind == "sandbox":
+        raise P2PError(failure(cmd, r))
+    if kind != "ok":
         raise P2PError("GitHub CLI is not logged in. Run `gh auth login`, then publish again.")
 
 
@@ -46,11 +92,11 @@ def check_ready(build: Build) -> dict:
 
 
 def _repo_exists(slug: str, cwd: Path) -> bool:
-    return _run(["gh", "repo", "view", slug, "--json", "name"], cwd, check=False).returncode == 0
+    return _answers(["gh", "repo", "view", slug, "--json", "name"], cwd)
 
 
 def _has_marker(slug: str, cwd: Path) -> bool:
-    return _run(["gh", "api", f"repos/{slug}/contents/{MARKER}", "--silent"], cwd, check=False).returncode == 0
+    return _answers(["gh", "api", f"repos/{slug}/contents/{MARKER}", "--silent"], cwd)
 
 
 def _commit(site: Path, message: str) -> bool:
@@ -91,7 +137,8 @@ def _enable_pages(slug: str, cwd: Path) -> str:
     r = _run(["gh", "api", "-X", "POST", f"repos/{slug}/pages", "-f", "source[branch]=main", "-f", "source[path]=/"],
              cwd, check=False)
     if r.returncode != 0 and "409" not in r.stderr and "already" not in r.stderr.lower():
-        return f"could not be enabled: {(r.stderr or r.stdout).strip().splitlines()[0]}"
+        hint = f" {SANDBOX_HINT}" if classify(r.returncode, r.stderr + r.stdout) == "sandbox" else ""
+        return f"could not be enabled: {((r.stderr or r.stdout).strip().splitlines() or ['no output'])[0]}{hint}"
     status = "queued"
     for _ in range(12):
         s = _run(["gh", "api", f"repos/{slug}/pages", "--jq", ".status"], cwd, check=False)
