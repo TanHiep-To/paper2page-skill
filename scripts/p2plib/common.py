@@ -13,7 +13,7 @@ import yaml
 SKILL_DIR = Path(__file__).resolve().parents[2]
 STEPS = ["extract", "content", "render", "check"]
 RESERVED_NAMES = {"projects", "publications", "cv", "people", "course", "thesis", "demo", "blog"}
-NAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$")
+NAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9_-]*[A-Za-z0-9])?$")
 LINK_ORDER = ["code", "model", "dataset", "arxiv", "video"]
 TODO = "TODO"
 
@@ -24,7 +24,7 @@ class P2PError(Exception):
 
 @dataclass(frozen=True)
 class Build:
-    """All generated files of one paper: <cwd>/build/<name>/."""
+    """All generated files of one paper: <cwd>/build/<folder>/, named after its folder in papers/."""
     dir: Path
 
     @property
@@ -47,26 +47,21 @@ class Build:
 
 def validate_name(name: str) -> str:
     if not NAME_RE.match(name):
-        raise P2PError(f'Invalid project name "{name}". Use letters, digits and hyphens only.')
+        raise P2PError(f'Invalid project name "{name}". Use letters, digits, hyphens and underscores only.')
     if name.lower() in RESERVED_NAMES:
         raise P2PError(f'Project name "{name}" collides with a page on the main site. '
                        f'Reserved names: {", ".join(sorted(RESERVED_NAMES))}. Choose another with --name.')
     return name
 
 
-def derive_name(title: str, pdf: Path | None = None) -> str:
-    """Short method/dataset name: the title's part before ':' when short, else the paper's folder name
-    (papers/<Name>/paper.pdf), else the first word of the title."""
-    head = title.split(":", 1)[0].strip() if ":" in title else ""
-    folder = pdf.resolve().parent.name if pdf else ""
-    generic = RESERVED_NAMES | {"papers", "paper", "pdf", "downloads", "desktop", "documents"}
-    if head and len(head.split()) <= 3:
-        candidate = head
-    elif NAME_RE.match(folder) and folder.lower() not in generic:
-        candidate = folder
-    else:
-        candidate = (title.split() or ["paper"])[0]
-    return re.sub(r"[^A-Za-z0-9-]+", "-", candidate).strip("-") or "paper"
+def paper_folder(pdf: Path) -> str:
+    """The folder in papers/ that holds the PDF (papers/<folder>/<file>.pdf). It names the build folder
+    and is the default repository name; the paper's title is never used for either."""
+    parent = pdf.resolve().parent
+    if parent.parent.name != "papers":
+        raise P2PError(f"{pdf} is not inside papers/<folder>/. Put the PDF in its own folder there, "
+                       f"e.g. papers/MyPaper/{pdf.name}, and run again.")
+    return parent.name
 
 
 def is_todo(value) -> bool:
@@ -186,7 +181,7 @@ def write_paper_yaml(pdf: Path, name: str, authors: list[dict], metrics: list[tu
 # Settings for the project page of {pdf.name}. Generated on the first run with what was detected
 # in the PDF; edit and rebuild. Command-line flags override these values.
 
-name: {name}    # repo name = page path (letters, digits, hyphens)
+name: {name}    # repo name = page path (letters, digits, hyphens, underscores); the build folder is always build/<papers folder>
 
 links:          # a URL, "soon" (disabled "coming soon" button), or empty (no button)
   code:         # empty = "Code (coming soon)"; write none to hide the button

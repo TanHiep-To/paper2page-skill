@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from . import check, content, extract, publish, site
-from .common import SKILL_DIR, STEPS, Build, P2PError, detect_owner, derive_name, load_config, paper_settings, \
+from .common import SKILL_DIR, STEPS, Build, P2PError, detect_owner, load_config, paper_folder, paper_settings, \
     parse_link_flags, paper_yaml_path, save_crop_override, validate_name, write_paper_yaml
 
 TODO_HINT = "Ask Claude Code to fill the TODO fields in {path} from the paper, then run with --from render"
@@ -20,7 +20,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     def paper_args(sp):
         sp.add_argument("--paper", required=True, type=Path, help="paper PDF")
-        sp.add_argument("--name", help="project name (default: from the yaml or the title)")
+        sp.add_argument("--name", help="repository name / page path (default: the yaml, then the folder in papers/)")
 
     b = sub.add_parser("build", help="extract -> content -> render -> check")
     paper_args(b)
@@ -45,8 +45,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--bbox", help="x0,y0,x1,y1 in PDF points, origin top-left")
     r.add_argument("--reset", action="store_true", help="remove the manual crop and use automatic detection again")
 
-    u = sub.add_parser("publish", help="push build/<name>/site to github.com/<owner>/<name>")
-    u.add_argument("build_dir", type=Path, help="the build/<name> folder")
+    u = sub.add_parser("publish", help="push build/<folder>/site to github.com/<owner>/<name>")
+    u.add_argument("build_dir", type=Path, help="the build/<folder> folder")
     u.add_argument("--owner", help="GitHub account")
     u.add_argument("--name", help="repository name (default: the build's name)")
     u.add_argument("--private", action="store_true", help="create a private repository")
@@ -64,12 +64,17 @@ def _template_dir(flag: Path | None, config: dict) -> Path:
 
 
 def _open(args, link_flags: dict | None = None, host_pdf: bool = False) -> tuple[dict, str, Build]:
-    """Settings, project name and build folder for --paper (same resolution for every subcommand)."""
+    """Settings, repository name and build folder for --paper (same resolution for every subcommand).
+
+    The build folder is build/<folder> for papers/<folder>/<file>.pdf. --name and `name:` in the yaml
+    only change the repository name / page path.
+    """
     if not args.paper.is_file():
         raise P2PError(f"PDF not found: {args.paper}")
+    folder = paper_folder(args.paper)
     settings = paper_settings(args.paper, link_flags or {}, host_pdf)
-    name = validate_name(args.name or settings["name"] or derive_name(extract.read_header(args.paper)["title"], args.paper))
-    return settings, name, Build(Path("build") / name)
+    name = validate_name(args.name or settings["name"] or folder)
+    return settings, name, Build(Path("build") / folder)
 
 
 def cmd_build(args) -> int:

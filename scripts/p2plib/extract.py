@@ -20,12 +20,6 @@ def pdf_sha1(pdf: Path) -> str:
     return hashlib.sha1(pdf.read_bytes()).hexdigest()
 
 
-def read_header(pdf: Path) -> dict:
-    """Title, authors and affiliations from page 1 only (cheap; used to pick the project name)."""
-    with pymupdf.open(pdf) as doc:
-        return _header(doc[0])
-
-
 # ---------- title, authors, affiliations from page 1 ----------
 
 def _header_blocks(page: pymupdf.Page) -> list[list[dict]]:
