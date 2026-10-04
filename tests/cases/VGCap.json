@@ -1,0 +1,51 @@
+{
+  "folder": "VGCap",
+  "paper": "papers/VGCap/VGCap.pdf",
+  "prompt_source": "papers/VGCap/prompt.md",
+  "prompt": [
+    "Paper has no teaser image",
+    "Short abstract",
+    "Highlight the equation"
+  ],
+  "expect": {
+    "teaser": false,
+    "bibtex": true,
+    "sections": [
+      "Summary",
+      "Method",
+      "Quantitative Results",
+      "Qualitative Results"
+    ],
+    "figures": [
+      "fig1",
+      "figEq1",
+      "figEq3",
+      "fig4"
+    ],
+    "section_figures": {
+      "Method": [
+        "fig1",
+        "figEq1",
+        "figEq3"
+      ]
+    },
+    "tables": [
+      "table1",
+      "table2"
+    ],
+    "not_on_page": [
+      "fig2",
+      "fig3"
+    ],
+    "absent_text": [
+      "abstract",
+      "News image captioning requires models"
+    ],
+    "statuses": [
+      "applied",
+      "partly",
+      "partly"
+    ],
+    "note": "The abstract is verbatim and cannot be shortened: it is replaced by a three-sentence Summary section. Equations (1) and (3) are manual crops (figEq1, figEq3) shown in Method; the template has no highlight style."
+  }
+}

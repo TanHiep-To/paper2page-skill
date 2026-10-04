@@ -294,7 +294,9 @@ class _Media:
         if not _ok(fig_id):
             return []
         src = self.source(fig_id)
-        label = "" if src.get("fallback") else f"Figure {src['number']}."
+        # no "Figure N." label for a crop without a printed caption (the page-1 fallback, or a manual
+        # crop of something that is not a numbered figure, such as an equation)
+        label = "" if src.get("fallback") or not src.get("caption") else f"Figure {src['number']}."
         return self.blocks.new_figure(src, self.alt(fig_id), label, self.notes.get(fig_id, {}).get("caption", ""))
 
     def table(self, t: dict) -> list[Tag]:

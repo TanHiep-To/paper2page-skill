@@ -123,6 +123,18 @@ class Captions(unittest.TestCase):
         self.assertEqual(figures.unique_key("A1", 15, found, 13), "A1")
 
 
+class AppendixTags(unittest.TestCase):
+    def test_lettered_captions_mark_the_appendix_but_manual_crops_do_not(self):
+        from p2plib.extract import _mark_appendix
+        items = [{"id": "fig1", "page": 2, "caption": "Fig. 1: x"}, {"id": "figEq1", "page": 6, "caption": ""},
+                 {"id": "fig4", "page": 11, "caption": "Fig. 4: y"}]
+        self.assertIsNone(_mark_appendix(items, None))
+        self.assertEqual([i["part"] for i in items], ["main", "main", "main"])
+        items.append({"id": "figA1", "page": 14, "caption": "Figure A1: z"})
+        self.assertEqual(_mark_appendix(items, None), 14)
+        self.assertEqual([i["part"] for i in items], ["main", "main", "main", "appendix"])
+
+
 class Blocks(unittest.TestCase):
     OLD = {"overview_figure": "fig1", "tagline": "A tagline.", "method": {"figure": "fig2", "paragraphs": ["How it works."]},
            "tables": [{"id": "table1"}], "quantitative_figures": [{"figure": "fig3", "description": "A chart."}],

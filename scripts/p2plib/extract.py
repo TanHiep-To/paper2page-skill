@@ -45,7 +45,9 @@ def _appendix_start(doc: pymupdf.Document, pages: list[str]) -> int | None:
 
 def _mark_appendix(items: list[dict], start: int | None) -> int | None:
     """Flag appendix figures and tables. Lettered labels ('A1', 'S3') are appendix items by themselves."""
-    lettered = [i for i in items if re.match(r"(fig|table)[A-Za-z]", i["id"])]
+    # appendix labels printed in a caption ("Figure A1", "Table B2"); a manual crop named by the user
+    # (figEq1) has no printed caption and says nothing about where the appendix is
+    lettered = [i for i in items if i.get("caption") and re.fullmatch(r"(fig|table)(App|[A-Z]{1,2})\d+", i["id"])]
     if start is None and lettered:
         start = min(i["page"] for i in lettered if i.get("page")) if any(i.get("page") for i in lettered) else None
     for i in items:
