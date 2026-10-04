@@ -5,8 +5,12 @@ For installation see [`README.md`](README.md).
 
 - [The command](#the-command)
 - [Arguments](#arguments)
+- [Where the paper goes](#where-the-paper-goes)
 - [Per-paper settings](#per-paper-settings)
+- [Prompt: what to extract and how to lay out the page](#prompt-what-to-extract-and-how-to-lay-out-the-page)
+- [Appendix](#appendix)
 - [Example: GenKOL](#example-genkol)
+- [Using the agent](#using-the-agent)
 - [Output folder](#output-folder)
 - [Fixing a bad crop](#fixing-a-bad-crop)
 - [Running without an agent](#running-without-an-agent)
@@ -15,8 +19,8 @@ For installation see [`README.md`](README.md).
 ## The command
 
 ```
-/build-page --paper <pdf> [--template <dir>] [--name X] [--owner Y] [--link kind=url ...]
-            [--host-pdf] [--from extract|content|render|check]
+/build-page --paper <pdf> [--prompt <file.md | "text">] [--template <dir>] [--name X] [--owner Y]
+            [--link kind=url ...] [--host-pdf] [--from extract|content|render|check]
             [--publish] [--pages] [--private]
 ```
 
@@ -25,7 +29,7 @@ One command runs four steps and then, if asked, publishes:
 | Step | What happens | Writes |
 |---|---|---|
 | `extract` | Finds figures, tables, title, authors and abstract in the PDF | `extracted/` |
-| `content` | Fills the page content; the agent writes tagline and summaries | `content.json` |
+| `content` | Fills the page content; the agent writes tagline and summaries and applies `--prompt` | `content.json` |
 | `render` | Builds the page from the template | `site/` |
 | `check` | Runs the quality checks and takes screenshots | `report.md`, `screenshots/` |
 
@@ -37,9 +41,10 @@ Paths are relative to the folder where you run the command. In Codex, use `$buil
 
 | Argument | Purpose | Default |
 |---|---|---|
-| `--paper <pdf>` | The paper to build from. **Required.** | |
+| `--paper <pdf>` | The paper to build from, inside `papers/<folder>/`. **Required.** | |
+| `--prompt <file.md \| "text">` | Optional instructions: what to take from the paper and how to lay out the page. A `.md` file or inline text. See [Prompt](#prompt-what-to-extract-and-how-to-lay-out-the-page). | None: the template's default page |
 | `--template <dir>` | Use another page template (a folder with `index.html` and `static/`). | `template` in `config.yaml`, else the bundled `template/` |
-| `--name X` | Repository name and page path. Letters, digits, hyphens. | `name` in the yaml, else the short name before the colon in the title, else the paper's folder name |
+| `--name X` | Repository name and page path. Letters, digits, hyphens, underscores. It never changes the build folder. | `name` in the yaml, else the paper's folder name in `papers/` |
 | `--owner Y` | GitHub account that owns the page. | `owner` in `config.yaml`, else the `gh` login |
 | `--link kind=url` | Add a link button. Repeatable. Kinds: `code`, `model`, `dataset`, `arxiv`, `video`. Use `kind=soon` for a disabled "coming soon" button, `kind=none` to hide it. | Paper and Code read "(coming soon)" |
 | `--host-pdf` | Compress the PDF and publish it behind the Paper button. | Off |
@@ -51,6 +56,7 @@ Which `--from` to use:
 |---|---|
 | The yaml, or a crop | `--from content` |
 | Only `content.json` | `--from render` |
+| The prompt | pass `--prompt` again; the run starts at the content step |
 
 ### Publish
 
@@ -68,6 +74,21 @@ Publishing rules:
 - These names are rejected: `projects, publications, cv, people, course, thesis, demo, blog`.
 
 Precedence: command-line arguments, then the per-paper yaml, then `config.yaml`.
+
+## Where the paper goes
+
+Put each paper in its own folder inside `papers/`:
+
+```
+papers/VG_Cap/paper.pdf      ->  build/VG_Cap/
+papers/GenKOL/GenKOL.pdf     ->  build/GenKOL/
+```
+
+- The build folder is always `build/<folder>`, named after the folder in `papers/`. It is never taken
+  from the paper's title.
+- The repository name defaults to the same folder name. `--name` or `name:` in the yaml change only
+  the repository name and page path (`https://<owner>.github.io/<name>/`), not the build folder.
+- A PDF that is not inside `papers/<folder>/` is rejected: move it there and run again.
 
 ## Per-paper settings
 
@@ -99,6 +120,82 @@ metric_directions:     # which way is better; wildcards allowed
 
 `metric_directions` makes a results table show the best value in bold and the second best
 underlined. The marks are computed from the numbers.
+
+## Prompt: what to extract and how to lay out the page
+
+`--prompt` is optional. Without it the page follows the template: teaser, Abstract, Method,
+Quantitative Results, Qualitative Results, BibTeX.
+
+```
+/build-page --paper papers/CPAM/paper.pdf --prompt papers/CPAM/prompt.md
+/build-page --paper papers/VG_Cap/paper.pdf --prompt "No teaser: start with the abstract."
+```
+
+| Value | Result |
+|---|---|
+| a path ending in `.md` | The file is read. A missing file is an error. |
+| a file with another extension (`.txt`, `.docx`, ...) | Rejected: save the instructions as `.md`. |
+| anything else | Used as inline instruction text. |
+
+Convention: keep the prompt in `papers/<folder>/prompt.md`, one instruction per `- ` bullet. Prompt
+files are never created for you.
+
+The prompt is free text. It can say:
+
+- **what to take from the paper**: skip sections, only an overview of the method, only the main
+  results against the state of the art, use figures from the appendix;
+- **how to lay out the page**: no teaser, the order of the sections, extra or removed sections,
+  section titles.
+
+Example, `papers/CPAM/prompt.md` (a long journal paper):
+
+```markdown
+- Skip PRELIMINARY ANALYSIS, ablation study and user study.
+- Only the overview of the proposed method.
+- Show a few main results compared with SOTA.
+- Add visualizations from the appendix (the PDF is main paper + appendix merged).
+```
+
+Example, `papers/VG_Cap/prompt.md` (a paper with no teaser figure):
+
+```markdown
+- No teaser: this paper has no teaser figure, so start with the abstract.
+- Put Fig. 1 (the pipeline overview) in the Method section.
+- Results: show only Table 1 (comparison with existing methods); skip the ablation study.
+- After the results add a section "Entity Selection Analysis" with Fig. 2, then a section
+  "Qualitative Comparison" with Fig. 4.
+```
+
+How it works:
+
+- The agent applies the prompt in the content step and writes the result to `content.json`: an
+  ordered list of `blocks` (teaser, abstract, any number of sections, bibtex) that the renderer
+  follows. A block that is left out is not on the page.
+- Whatever the prompt skips does not appear on the page: no text, figure or table from it. A skipped
+  figure or table on the page is a FAIL. A number that the PDF prints only inside a skipped section
+  is a WARN, so you can check that sentence.
+- The style does not change. Every block is a clone of the template's own blocks; no CSS, inline
+  style or class is added, and the template fidelity and typography checks still have to pass.
+- The result lives in `content.json`, so `--from render` needs no prompt. If you pass `--prompt`
+  together with `--from render` or `--from check`, the run starts at the content step and says so.
+- A copy of the prompt is saved as `build/<folder>/prompt_used.md` (reference only).
+- `report.md` gets a section **Instructions applied**: each instruction, whether it was applied,
+  partly applied or not applied, and how or why.
+
+## Appendix
+
+A PDF that holds the main paper followed by its appendix is handled as one document.
+
+- Appendix captions keep their own numbering: `Figure A1`, `Fig. S3`, `Figure B.2`, `Table B2`
+  (ids `figA1`, `figS3`, `figB2`, `tableB2`).
+- IEEE-style captions are read too: `TABLE II` with the caption on the next line is `table2`.
+- The first appendix page is detected from the PDF outline or from the first appendix heading after
+  the references. Figures and tables from there on are marked `appendix` in `extracted.json` and
+  in the report, also when they continue the main numbering (Figure 5, 6, ...).
+- If the appendix restarts at `Figure 1`, that figure becomes `figApp1` and keeps its printed label.
+- Appendix figures are used like any other. Ask for them in the prompt: "use the qualitative figures
+  from the appendix".
+- If your appendix is a separate file, merge it after the main paper into one PDF first.
 
 ## Example: GenKOL
 
@@ -144,20 +241,40 @@ The agent asks you to confirm the new repository, then prints the page URL
 Other variants:
 
 ```
+/build-page --paper papers/GenKOL/GenKOL.pdf --prompt papers/GenKOL/prompt.md # your own selection and layout
+/build-page --paper papers/GenKOL/GenKOL.pdf --prompt "No BibTeX yet. Put the user study before the method."
 /build-page --paper papers/GenKOL/GenKOL.pdf --host-pdf --publish --pages     # also publish the PDF
 /build-page --paper papers/GenKOL/GenKOL.pdf --name genkol-page --publish     # another repository name
 /build-page --paper papers/GenKOL/GenKOL.pdf --from render                    # after editing content.json
 ```
 
+## Using the agent
+
+`/build-page` is run by the coding agent. The scripts do the deterministic work; the agent does what
+needs reading:
+
+1. reviews every crop and fixes bad ones;
+2. reads the whole paper and, if you passed `--prompt`, each instruction of it;
+3. fills `content.json`: the ordered `blocks`, the summaries, the alt texts, and with a prompt also
+   `excluded` (what was left out) and `instructions_applied` (what it did for each instruction);
+4. renders, reads `report.md`, looks at the desktop and mobile screenshots, and fixes what fails;
+5. reports to you, including the section "Instructions applied".
+
+After a build you can keep steering in words in the same session, for example "move Results before
+Method", "drop the user study figure" or "the crop of figure 3 is cut off". The agent edits
+`content.json` (or the crop) and renders again. An instruction that cannot be met with the template's
+own blocks, such as a new visual style, is reported as not applied instead of being forced.
+
 ## Output folder
 
-Everything goes to `./build/<name>/` (ignored by git):
+Everything goes to `./build/<folder>/`, named after the paper's folder in `papers/` (ignored by git):
 
 ```
 build/GenKOL/
   extracted/       fig1.png ..., table1.png ..., extracted.json, contact_sheet.png
-  content.json     page content; edit this, then --from render
-  report.md        PASS / WARN / FAIL per check
+  content.json     page content and block order; edit this, then --from render
+  prompt_used.md   copy of the --prompt that was used (only with --prompt)
+  report.md        PASS / WARN / FAIL per check, "Instructions applied"
   screenshots/     desktop.png, mobile.png, template_vs_output.png
   site/            the page that is published
 ```
@@ -182,7 +299,7 @@ $P2P recrop --paper papers/GenKOL/GenKOL.pdf --fig 2 --reset                    
 | Argument | Purpose |
 |---|---|
 | `--page P` | Page number, starting at 1. |
-| `--fig N` / `--table N` | Which figure or table to recrop. |
+| `--fig N` / `--table N` | Which figure or table to recrop. Appendix labels work too (`--fig A1`); `TABLE II` is `--table 2`. |
 | `--bbox x0,y0,x1,y1` | The new box, read off the grid image. |
 | `--reset` | Remove the manual box. |
 
@@ -216,6 +333,10 @@ old one.
 |---|---|
 | `/build-page` is not offered | Restart Claude Code. Check that `~/.claude/skills/build-page/SKILL.md` exists. |
 | The PDF is not found | Paths are relative to the current folder; the folder is `papers/`, not `paper/`. |
+| `... is not inside papers/<folder>/` | Move the PDF into its own folder in `papers/`, e.g. `papers/MyPaper/paper.pdf`. |
+| `--prompt takes a .md file or inline text` | Save the instructions as `papers/<folder>/prompt.md`, or pass them as quoted text. |
+| `Prompt file not found` | Check the path of the `.md` file; prompt files are not created automatically. |
+| `the block list cannot be rendered` | `content.json` refers to a figure or table that does not exist, or has an unknown block type; the message lists each problem. |
 | `Chromium could not be started` | Run `~/.claude/skills/build-page/.venv/bin/python -m playwright install chromium`. |
 | `GitHub CLI is not logged in` | Run `gh auth login`. |
 | `Project name ... collides` | Choose another name with `--name`. |
@@ -224,4 +345,4 @@ old one.
 | A table is shown as an image | Its numbers could not all be verified against the PDF text. |
 | No bold or underline in a table | Set `metric_directions` in the yaml. |
 | The page did not change online | GitHub Pages can take a minute; reload without cache. |
-| Start over for one paper | Delete `build/<name>/` and build again. The yaml is kept. |
+| Start over for one paper | Delete `build/<folder>/` and build again. The yaml is kept. |

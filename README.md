@@ -82,7 +82,7 @@ In Codex, use `$build-page` with the same arguments.
 
 | File | Content |
 |---|---|
-| [`INSTRUCT.md`](INSTRUCT.md) | Commands, every argument, the per-paper yaml, and a full example |
+| [`INSTRUCTION.md`](INSTRUCTION.md) | Commands, every argument, the per-paper yaml, and a full example |
 | [`SKILL.md`](SKILL.md) | The workflow the agent follows |
 
 ## Update and uninstall
