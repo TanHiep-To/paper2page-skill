@@ -1,12 +1,18 @@
 {
   "folder": "GenKOL",
   "paper": "papers/GenKOL/GenKOL.pdf",
-  "prompt": null,
+  "prompt_source": "papers/GenKOL/prompt.md",
+  "prompt": [
+    "Only the overview of the proposed method.",
+    "Show the main quantitative results (FID/IS comparison).",
+    "Skip the ablations and the related work.",
+    "Add visualizations from the appendix: 2-3 sample figures.",
+    "No Abstract"
+  ],
   "expect": {
     "teaser": true,
     "bibtex": true,
     "sections": [
-      "Abstract",
       "Method",
       "Quantitative Results",
       "Qualitative Results"
@@ -18,10 +24,33 @@
       "fig7",
       "fig8"
     ],
+    "section_figures": {
+      "Method": [
+        "fig4"
+      ]
+    },
     "tables": [
       "table2"
     ],
-    "not_on_page": [],
-    "absent_text": []
+    "not_on_page": [
+      "fig2",
+      "table1"
+    ],
+    "absent_text": [
+      "abstract",
+      "related work",
+      "Key Opinion Leader (KOL) play"
+    ],
+    "max_method_paragraphs": {
+      "Method": 3
+    },
+    "statuses": [
+      "applied",
+      "partly",
+      "applied",
+      "not applied",
+      "applied"
+    ],
+    "note": "The paper has no FID/IS scores and no appendix: instruction 2 is partly applied (Table II and the user study instead) and instruction 4 is not applied."
   }
 }
