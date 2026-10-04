@@ -8,3 +8,6 @@ build/
 # your papers stay on your machine
 papers/*
 !papers/.gitkeep
+# test papers and any PDF stay on your machine
+cases/
+*.pdf
