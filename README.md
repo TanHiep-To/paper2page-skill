@@ -52,6 +52,20 @@ sudo apt install python3 python3-venv git gh poppler-utils      # Ubuntu / Debia
 gh auth login                                                   # once, if you plan to publish
 ```
 
+**Codex users.** Publishing runs `gh` and `git push`, which need the network and the macOS
+Keychain; Codex's sandbox blocks both, and `gh` then reports the token as invalid although you are
+logged in. Put this in the user-level file `~/.codex/config.toml` (it must be the user-level file,
+not a project one), so that Codex asks you before running those commands outside the sandbox:
+
+```toml
+approval_policy = "on-request"
+
+[sandbox_workspace_write]
+network_access = true
+```
+
+See [Running in Codex](INSTRUCTION.md#running-in-codex).
+
 ## Install
 
 ```bash

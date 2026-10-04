@@ -13,6 +13,7 @@ For installation see [`README.md`](README.md).
 - [Captions, equations and figure sizes](#captions-equations-and-figure-sizes)
 - [Example: GenKOL](#example-genkol)
 - [Using the agent](#using-the-agent)
+- [Running in Codex](#running-in-codex)
 - [Output folder](#output-folder)
 - [Fixing a bad crop](#fixing-a-bad-crop)
 - [Running without an agent](#running-without-an-agent)
@@ -392,6 +393,23 @@ Method", "drop the user study figure" or "the crop of figure 3 is cut off". The 
 `content.json` (or the crop) and renders again. An instruction that cannot be met with the template's
 own blocks, such as a new visual style, is reported as not applied instead of being forced.
 
+## Running in Codex
+
+- Invoke the skill with `$build-page` and the same arguments, e.g.
+  `$build-page --paper papers/GenKOL/GenKOL.pdf --publish --pages`.
+- Building needs nothing special. Publishing does: `gh` and `git push` need the network and the
+  macOS Keychain, which Codex's sandbox blocks. Codex therefore asks to run them with escalated
+  permissions, outside the sandbox: **approve those prompts** for `gh` and `git`. Set
+  `~/.codex/config.toml` as shown in [`README.md`](README.md#requirements) so that it asks.
+- To see what the sandbox does to your login, compare the two:
+  ```bash
+  gh auth status                          # in your terminal: logged in
+  codex debug seatbelt gh auth status     # inside the sandbox: "The token in keyring is invalid"
+  ```
+  The second result does not mean your login is broken. The skill retries outside the sandbox and
+  only asks for `gh auth login` if that fails too.
+- You never have to run `p2p.py` yourself to get around this.
+
 ## Output folder
 
 Everything goes to `./build/<folder>/`, named after the paper's folder in `papers/` (ignored by git):
@@ -468,6 +486,7 @@ old one.
 | `the block list cannot be rendered` | `content.json` refers to a figure or table that does not exist, or has an unknown block type; the message lists each problem. |
 | `Chromium could not be started` | Run `~/.claude/skills/build-page/.venv/bin/python -m playwright install chromium`. |
 | `GitHub CLI is not logged in` | Run `gh auth login`. |
+| "token invalid" in Codex, but `gh auth status` is fine in the terminal | The sandbox blocks the network and the Keychain; the login is fine. Approve Codex's escalation prompt for `gh` / `git`, and set `~/.codex/config.toml` as in [Running in Codex](#running-in-codex). Do not log in again. |
 | `Project name ... collides` | Choose another name with `--name`. |
 | `Repository ... has no .paper2page marker` | A repository with that name exists and was not made by this tool. Use another `--name`. |
 | Authors or title are wrong | Edit `title` / `authors` in `content.json`, then `--from render`. |
