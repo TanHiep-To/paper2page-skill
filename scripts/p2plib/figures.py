@@ -13,10 +13,33 @@ from PIL import Image, ImageChops
 
 from .pdf_text import squash
 
-CAPTION_RE = re.compile(r"^\s*(?:Fig\.|Figure|FIGURE|Fig)\s*(\d+)\s*[:.|]")
+# "Figure 3", "Fig. 3", and appendix labels with their own numbering: "Figure A1", "Fig. S3", "Figure B.2".
+CAPTION_RE = re.compile(r"^\s*(?:Fig\.|Figure|FIGURE|Fig)\s*([A-Z]?\.?\d+)\s*[:.|]")
 DPI = 300
 MAX_BYTES = 500 * 1024
 PAD_PX = 12
+
+
+def label_key(label: str) -> str:
+    """Id suffix of a printed label: 'A.1' -> 'A1', '3' -> '3'."""
+    return re.sub(r"[^A-Za-z0-9]", "", label)
+
+
+def label_number(label: str) -> int | str:
+    """Main-paper labels are integers; appendix labels ('A1', 'S3') stay as printed."""
+    return int(label) if label.isdigit() else label
+
+
+def label_order(key: str) -> tuple:
+    """Main figures and tables first, in numeric order; appendix labels after them."""
+    return (0, int(key), "") if key.isdigit() else (1, 0, key)
+
+
+def unique_key(key: str, page_no: int, found: dict[str, dict], appendix_start: int | None) -> str:
+    """An appendix may restart at 'Figure 1': that one becomes 'App1' and keeps its printed label."""
+    if appendix_start and page_no >= appendix_start and key in found and found[key]["page"] < appendix_start:
+        return f"App{key}"
+    return key
 
 
 # ---------- page geometry ----------
@@ -106,16 +129,17 @@ def _figure_rect(page: fitz.Page, caption: dict, blocks: list[dict], graphics: l
     return (box + (-3, -3, 3, 3)) & fitz.Rect(page.rect.x0, region.y0, page.rect.x1, region.y1)
 
 
-def detect_figures(doc: fitz.Document) -> list[dict]:
-    """One entry per 'Figure N' caption: number, page (1-based), caption, rect (or None), side."""
-    found: dict[int, dict] = {}
+def detect_figures(doc: fitz.Document, appendix_start: int | None = None) -> list[dict]:
+    """One entry per 'Figure N' caption: key, number, page (1-based), caption, rect (or None), side."""
+    found: dict[str, dict] = {}
     for page in doc:
         blocks = text_blocks(page)
-        captions = [(int(m.group(1)), b) for b in blocks if (m := CAPTION_RE.match(b["text"]))]
+        captions = [(m.group(1), b) for b in blocks if (m := CAPTION_RE.match(b["text"]))]
         if not captions:
             continue
         graphics = _graphics(page)
-        for number, cap in captions:
+        for label, cap in captions:
+            number = unique_key(label_key(label), page.number + 1, found, appendix_start)
             if number in found and found[number]["rect"] is not None:
                 continue
             rect, side = _figure_rect(page, cap, blocks, graphics, above=True), "above"
@@ -123,9 +147,9 @@ def detect_figures(doc: fitz.Document) -> list[dict]:
                 rect, side = _figure_rect(page, cap, blocks, graphics, above=False), "below"
             if rect is not None and (rect.height < 20 or rect.width < 20):
                 rect = None
-            found[number] = {"number": number, "page": page.number + 1, "caption": squash(cap["text"]),
-                             "rect": rect, "side": side}
-    return [found[n] for n in sorted(found)]
+            found[number] = {"key": number, "number": label_number(label), "page": page.number + 1,
+                             "caption": squash(cap["text"]), "rect": rect, "side": side}
+    return [found[k] for k in sorted(found, key=label_order)]
 
 
 # ---------- embedded originals ----------

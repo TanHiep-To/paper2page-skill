@@ -143,7 +143,7 @@ def _crop_overrides(raw, path: Path) -> dict:
     out = {}
     for key, value in (raw or {}).items():
         ok = isinstance(value, dict) and isinstance(value.get("page"), int) and isinstance(value.get("bbox"), list) \
-            and len(value["bbox"]) == 4 and re.fullmatch(r"(fig\d+|table[A-Z]?\d+)", str(key))
+            and len(value["bbox"]) == 4 and re.fullmatch(r"(fig|table)[A-Za-z]*\d+", str(key))
         if not ok:
             raise P2PError(f'{path}: crop_overrides.{key} must look like  fig3: {{page: 5, bbox: [x0, y0, x1, y1]}}')
         out[str(key)] = {"page": value["page"], "bbox": [float(v) for v in value["bbox"]]}

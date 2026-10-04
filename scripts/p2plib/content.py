@@ -12,7 +12,7 @@ import re
 from .common import TODO, Build, direction_for, is_todo
 
 FULL_NUMBER = re.compile(r"^[-+−]?\d[\d,]*(?:\.\d+)?\s*%?(?:\s*±\s*\d[\d.]*)?$")
-CAPTION_PREFIX = re.compile(r"^\s*(?:Fig\.|Figure|FIGURE|Fig|Table|TABLE)\s*\d+\s*[:.|]\s*")
+CAPTION_PREFIX = re.compile(r"^\s*(?:Fig\.|Figure|FIGURE|Fig|Table|TABLE)\s*(?:[A-Z]?\.?\d+|[IVXL]+)\s*[:.|]\s*")
 AGENT_FIELDS = ("tagline", "method", "qualitative", "overview_figure")
 
 

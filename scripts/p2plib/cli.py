@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 from . import check, content, extract, publish, site
@@ -39,8 +40,8 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("recrop", help="set a manual crop for one figure or table and save it in the yaml")
     paper_args(r)
     target = r.add_mutually_exclusive_group(required=True)
-    target.add_argument("--fig", help="figure number, e.g. 5")
-    target.add_argument("--table", help="table number, e.g. 3 or C1")
+    target.add_argument("--fig", help="figure number, e.g. 5 or A1")
+    target.add_argument("--table", help="table number, e.g. 3 or C1 (TABLE II is 2)")
     r.add_argument("--page", type=int, help="page number, 1-based")
     r.add_argument("--bbox", help="x0,y0,x1,y1 in PDF points, origin top-left")
     r.add_argument("--reset", action="store_true", help="remove the manual crop and use automatic detection again")
@@ -126,7 +127,7 @@ def cmd_grid(args) -> int:
 
 def cmd_recrop(args) -> int:
     _, _, build = _open(args)
-    key = f"fig{args.fig}" if args.fig else f"table{args.table}"
+    key = ("fig" if args.fig else "table") + re.sub(r"[^A-Za-z0-9]", "", args.fig or args.table)
     if args.reset:
         path = save_crop_override(args.paper, key, None, None)
         print(f"Removed the manual crop of {key} from {path}.")
