@@ -240,6 +240,8 @@ def check_typography(review: dict) -> Check:
             where = f'{view}: {it["kind"]} "{it["text"]}"'
             if it["lines"] > 1 and it["lastWords"] == 1 and it["lastRatio"] >= 0.5:
                 long_words += 1  # one long unbreakable word (a URL) filling most of the line is not a widow
+            elif it["lines"] > 1 and it["lastWords"] == 1 and it.get("endsWithUrl"):
+                c.warn(f"{where}: last line is the URL the text ends with (a URL cannot be reworded or split)")
             elif it["lines"] > 1 and it["lastWords"] == 1 and it["kind"] in ("title", "caption"):
                 c.warn(f"{where}: last line is a single word (wording comes from the paper, so it is kept)")
             elif it["lines"] > 1 and it["lastWords"] == 1:

@@ -45,8 +45,9 @@ def _caption(block: dict, m: re.Match, blocks: list[dict]) -> tuple[str, pymupdf
         below = [b for b in blocks if b is not block and -2 <= b["rect"].y0 - rect.y1 < 14
                  and b["rect"].x0 < rect.x1 and b["rect"].x1 > rect.x0 and not rect.contains(b["rect"])]
         nxt = min(below, key=lambda b: b["rect"].y0, default=None)
-        if nxt is None or (text and nxt["text"] != nxt["text"].upper()):
-            break
+        letters = [c for c in nxt["text"] if c.isalpha()] if nxt else []
+        if not letters or (text and sum(c.isupper() for c in letters) < 0.7 * len(letters)):
+            break  # body text, not a continuation of a caption set in capitals
         text, rect = squash(f"{text} {nxt['text']}"), rect | nxt["rect"]
     return text, rect
 
