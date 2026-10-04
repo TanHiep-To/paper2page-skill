@@ -594,22 +594,33 @@ def _heading_at(title: str, text: str, start: int = 0) -> int:
     return -1
 
 
-def skipped_text(sections: list, pdf: PdfText) -> tuple[str, str, list[str]]:
-    """(text of the skipped sections, text of the rest of the PDF, problems).
+def skipped_text(sections: list, tables: list[dict], pdf: PdfText) -> tuple[str, str, list[str]]:
+    """(text of the skipped parts, text of the rest of the PDF, problems).
 
-    An entry is a heading title, or {"title", "until": the next heading that is kept, "pages": [..]}.
-    Without "until" or "pages" a section runs to the end of the page its heading is on.
+    A section entry is a heading title, or {"title", "until": the next heading that is kept, "pages": [..]}.
+    Without "until" or "pages" a section runs to the end of the page its heading is on. The cells of an
+    excluded table count as skipped text wherever the table is printed.
     """
-    full = "\n".join(pdf.pages)
+    pages, table_lines = list(pdf.pages), []
+    for t in tables:
+        cells = {tok for row in t.get("grid") or [] for cell in row for tok in pdf_text.clean(cell).split()}
+        if not cells or not t.get("page"):
+            continue
+        kept = []
+        for line in pages[t["page"] - 1].splitlines():
+            tokens = line.split()
+            (table_lines if tokens and all(tok in cells for tok in tokens) else kept).append(line)
+        pages[t["page"] - 1] = "\n".join(kept)
+    full = "\n".join(pages)
     offsets = [0]
-    for p in pdf.pages:
+    for p in pages:
         offsets.append(offsets[-1] + len(p) + 1)
     spans, problems = [], []
     for entry in sections or []:
         entry = {"title": entry} if isinstance(entry, str) else entry
         title = str(entry.get("title") or "")
         if entry.get("pages"):
-            spans += [(offsets[n - 1], offsets[n]) for n in entry["pages"] if 1 <= n <= len(pdf.pages)]
+            spans += [(offsets[n - 1], offsets[n]) for n in entry["pages"] if 1 <= n <= len(pages)]
             continue
         start = _heading_at(title, full) if title else -1
         if start < 0:
@@ -622,7 +633,7 @@ def skipped_text(sections: list, pdf: PdfText) -> tuple[str, str, list[str]]:
                                 "checked to the end of its page")
             end = next(o for o in offsets if o > start)
         spans.append((start, end))
-    inside, outside, pos = [], [], 0
+    inside, outside, pos = table_lines, [], 0
     for a, b in sorted(spans):
         a = max(a, pos)
         if b <= a:
@@ -667,7 +678,8 @@ def check_instructions(content: dict, extracted: dict, html: str, pdf: PdfText, 
     for item in (excluded.get("figures") or []) + (excluded.get("tables") or []):
         if files.get(item) and f'static/images/{files[item]}' in html:
             c.fail(f"{item} is excluded but its image is on the page")
-    inside, outside, problems = skipped_text(excluded.get("sections") or [], pdf)
+    skipped_tables = [t for t in extracted["tables"] if t["id"] in (excluded.get("tables") or [])]
+    inside, outside, problems = skipped_text(excluded.get("sections") or [], skipped_tables, pdf)
     for problem in problems:
         c.warn(problem)
     on_page = pdf_text.numbers_in(visible_text(BeautifulSoup(html, "html.parser"), body_only=True))
