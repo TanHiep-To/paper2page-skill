@@ -1,0 +1,20 @@
+{
+  "folder": "Graphilosophy",
+  "paper": "papers/Graphilosophy/paper.pdf",
+  "prompt": null,
+  "expect": {
+    "teaser": true,
+    "bibtex": true,
+    "sections": [
+      "Abstract",
+      "Method",
+      "Quantitative Results",
+      "Qualitative Results"
+    ],
+    "tables": [
+      "table3"
+    ],
+    "not_on_page": [],
+    "absent_text": []
+  }
+}

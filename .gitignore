@@ -9,5 +9,5 @@ build/
 papers/*
 !papers/.gitkeep
 # test papers and any PDF stay on your machine
-cases/
+/cases/
 *.pdf

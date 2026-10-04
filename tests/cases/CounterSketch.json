@@ -1,0 +1,27 @@
+{
+  "folder": "CounterSketch",
+  "paper": "papers/CounterSketch/CounterSketch.pdf",
+  "prompt": null,
+  "expect": {
+    "teaser": true,
+    "bibtex": true,
+    "sections": [
+      "Abstract",
+      "Method",
+      "Quantitative Results",
+      "Qualitative Results"
+    ],
+    "figures": [
+      "fig1",
+      "fig3",
+      "fig7",
+      "fig6",
+      "fig2"
+    ],
+    "tables": [],
+    "not_on_page": [
+      "table1"
+    ],
+    "absent_text": []
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "folder": "CogCanvas",
+  "paper": "papers/CogCanvas/paper.pdf",
+  "prompt_source": "papers/CogCanvas/prompt.md",
+  "prompt": [
+    "Only the overview of the method, skip implementation details.",
+    "Show the main benchmark table and 2-3 qualitative examples.",
+    "Skip related work and limitations."
+  ],
+  "expect": {
+    "teaser": true,
+    "bibtex": true,
+    "sections": [
+      "Abstract",
+      "Benchmark Overview",
+      "Benchmark Results",
+      "Qualitative Examples"
+    ],
+    "figures": [
+      "fig1",
+      "fig2",
+      "fig5",
+      "fig6"
+    ],
+    "section_figures": {
+      "Qualitative Examples": [
+        "fig5",
+        "fig6"
+      ]
+    },
+    "appendix_figures": [
+      "fig5",
+      "fig6"
+    ],
+    "tables": [
+      "table2"
+    ],
+    "not_on_page": [
+      "table1",
+      "fig3",
+      "fig4"
+    ],
+    "absent_text": [
+      "related work",
+      "limitation",
+      "A100",
+      "facexlib"
+    ],
+    "max_method_paragraphs": {
+      "Benchmark Overview": 3
+    },
+    "statuses": [
+      "applied",
+      "applied",
+      "applied"
+    ]
+  }
+}

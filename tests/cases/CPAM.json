@@ -1,0 +1,55 @@
+{
+  "folder": "CPAM",
+  "paper": "papers/CPAM/paper.pdf",
+  "prompt_source": "papers/CPAM/prompt.md",
+  "prompt": [
+    "Skip PRELIMINARY ANALYSIS, ablation study and user study.",
+    "Only the overview of the proposed method.",
+    "Show a few main results compared with SOTA.",
+    "Add visualizations from the appendix (the PDF is main paper + appendix merged)."
+  ],
+  "expect": {
+    "teaser": true,
+    "bibtex": true,
+    "sections": [
+      "Abstract",
+      "Method",
+      "Comparison with the State of the Art"
+    ],
+    "figures": [
+      "fig1",
+      "fig3",
+      "fig7"
+    ],
+    "tables": [
+      "table2"
+    ],
+    "not_on_page": [
+      "fig2",
+      "fig8",
+      "fig9",
+      "fig10",
+      "fig11",
+      "fig12",
+      "table3",
+      "table4",
+      "table1"
+    ],
+    "absent_text": [
+      "ablation",
+      "user study",
+      "preliminary",
+      "participants"
+    ],
+    "max_method_paragraphs": {
+      "Method": 3
+    },
+    "statuses": [
+      "applied",
+      "applied",
+      "applied",
+      "not applied"
+    ],
+    "note": "Instruction 4 is pending: this PDF has no appendix. With a merged PDF the expected status becomes applied and appendix_figures must be listed."
+  }
+}

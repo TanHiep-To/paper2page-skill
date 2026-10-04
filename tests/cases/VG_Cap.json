@@ -1,0 +1,55 @@
+{
+  "folder": "VG_Cap",
+  "paper": "papers/VG_Cap/paper.pdf",
+  "prompt_source": "inline",
+  "prompt": [
+    "No teaser: this paper has no teaser figure, so start with the abstract.",
+    "Put Fig. 1 (the pipeline overview) in the Method section.",
+    "Results: show only Table 1 (comparison with existing methods); skip the ablation study.",
+    "After the results add a section \"Entity Selection Analysis\" with Fig. 2, then a section \"Qualitative Comparison\" with Fig. 4."
+  ],
+  "expect": {
+    "teaser": false,
+    "bibtex": true,
+    "sections": [
+      "Abstract",
+      "Method",
+      "Quantitative Results",
+      "Entity Selection Analysis",
+      "Qualitative Comparison"
+    ],
+    "figures": [
+      "fig1",
+      "fig2",
+      "fig4"
+    ],
+    "section_figures": {
+      "Method": [
+        "fig1"
+      ],
+      "Entity Selection Analysis": [
+        "fig2"
+      ],
+      "Qualitative Comparison": [
+        "fig4"
+      ]
+    },
+    "tables": [
+      "table1"
+    ],
+    "not_on_page": [
+      "table2",
+      "fig3"
+    ],
+    "absent_text": [
+      "ablation",
+      "136"
+    ],
+    "statuses": [
+      "applied",
+      "applied",
+      "applied",
+      "applied"
+    ]
+  }
+}

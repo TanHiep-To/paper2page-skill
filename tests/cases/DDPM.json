@@ -1,0 +1,62 @@
+{
+  "folder": "DDPM",
+  "paper": "papers/DDPM/paper.pdf",
+  "source": "https://arxiv.org/pdf/2006.11239",
+  "prompt_source": "papers/DDPM/prompt.md",
+  "prompt": [
+    "Only the overview of the proposed method.",
+    "Show the main quantitative results (FID/IS comparison).",
+    "Skip the ablations and the related work.",
+    "Add visualizations from the appendix: 2-3 sample figures."
+  ],
+  "expect": {
+    "teaser": true,
+    "bibtex": true,
+    "sections": [
+      "Abstract",
+      "Method",
+      "Quantitative Results",
+      "Samples from the Appendix"
+    ],
+    "figures": [
+      "fig1",
+      "fig2",
+      "fig11",
+      "fig13",
+      "fig16"
+    ],
+    "section_figures": {
+      "Samples from the Appendix": [
+        "fig11",
+        "fig13",
+        "fig16"
+      ]
+    },
+    "appendix_figures": [
+      "fig11",
+      "fig13",
+      "fig16"
+    ],
+    "appendix_start_page": 13,
+    "tables": [
+      "table1"
+    ],
+    "not_on_page": [
+      "table2"
+    ],
+    "absent_text": [
+      "ablation",
+      "related work",
+      "23.69"
+    ],
+    "max_method_paragraphs": {
+      "Method": 3
+    },
+    "statuses": [
+      "applied",
+      "applied",
+      "applied",
+      "applied"
+    ]
+  }
+}

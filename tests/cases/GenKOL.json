@@ -1,0 +1,27 @@
+{
+  "folder": "GenKOL",
+  "paper": "papers/GenKOL/GenKOL.pdf",
+  "prompt": null,
+  "expect": {
+    "teaser": true,
+    "bibtex": true,
+    "sections": [
+      "Abstract",
+      "Method",
+      "Quantitative Results",
+      "Qualitative Results"
+    ],
+    "figures": [
+      "fig1",
+      "fig4",
+      "fig9",
+      "fig7",
+      "fig8"
+    ],
+    "tables": [
+      "table2"
+    ],
+    "not_on_page": [],
+    "absent_text": []
+  }
+}
